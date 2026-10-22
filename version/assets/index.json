@@ -1,0 +1,100 @@
+{
+  "version": 2,
+  "assets": {
+    "templates": {
+      "Template 1 - A Rating Blue - Customers Sales  .pptx": {
+        "path": "C:/Users/USER/Downloads/phantomops_rag_optimised/version/assets\\templates\\Template 1 - A Rating Blue - Customers Sales  .pptx",
+        "indexed_at": "2026-05-22T18:21:59",
+        "tags": [
+          "blue",
+          "customers",
+          "sales"
+        ],
+        "description": "blue theme | client-facing | sales presentation",
+        "purpose": "blue theme, client-facing, sales presentation"
+      },
+      "Template 2 - A Rating Orange - Customers Sales _ Tech Solutions.pptx": {
+        "path": "C:/Users/USER/Downloads/phantomops_rag_optimised/version/assets\\templates\\Template 2 - A Rating Orange - Customers Sales _ Tech Solutions.pptx",
+        "indexed_at": "2026-05-22T18:21:59",
+        "tags": [
+          "orange",
+          "customers",
+          "sales",
+          "tech",
+          "solutions"
+        ],
+        "description": "orange theme | client-facing | sales presentation",
+        "purpose": "orange theme, client-facing, sales presentation"
+      },
+      "Template 3 - B Rating Dark- Marketing _ Events  .pptx": {
+        "path": "C:/Users/USER/Downloads/phantomops_rag_optimised/version/assets\\templates\\Template 3 - B Rating Dark- Marketing _ Events  .pptx",
+        "indexed_at": "2026-05-22T18:21:59",
+        "tags": [
+          "dark",
+          "marketing",
+          "events"
+        ],
+        "description": "dark theme | marketing campaign | event or product launch",
+        "purpose": "dark theme, marketing campaign, event or product launch"
+      },
+      "Template 4 - C Rating - Internal _ Technical .pptx": {
+        "path": "C:/Users/USER/Downloads/phantomops_rag_optimised/version/assets\\templates\\Template 4 - C Rating - Internal _ Technical .pptx",
+        "indexed_at": "2026-05-22T18:21:59",
+        "tags": [
+          "internal",
+          "technical"
+        ],
+        "description": "internal report | technical documentation",
+        "purpose": "internal report, technical documentation"
+      }
+    },
+    "letterheads": {
+      "India Letter Head.docx": {
+        "path": "C:/Users/USER/Downloads/phantomops_rag_optimised/version/assets\\letterhead\\India Letter Head.docx",
+        "indexed_at": "2026-05-22T18:21:59",
+        "tags": [
+          "india",
+          "india"
+        ],
+        "description": "India region letterhead",
+        "region": "india"
+      },
+      "Letter Head Format_UK.docx": {
+        "path": "C:/Users/USER/Downloads/phantomops_rag_optimised/version/assets\\letterhead\\Letter Head Format_UK.docx",
+        "indexed_at": "2026-05-22T18:21:59",
+        "tags": [
+          "uk",
+          "uk"
+        ],
+        "description": "Uk region letterhead",
+        "region": "uk"
+      }
+    },
+    "logos": {
+      "EAI Systems Logo.jpg": {
+        "path": "C:/Users/USER/Downloads/phantomops_rag_optimised/version/assets\\logo\\EAI Systems Logo.jpg",
+        "indexed_at": "2026-05-22T18:22:01",
+        "description": "The EAI Systems logo features large stylized letters 'E' and 'A' with a teal accent and the word 'SYSTEMS' on a yellow banner.",
+        "tags": [
+          "eai systems",
+          "company logo",
+          "technology"
+        ],
+        "background": "white",
+        "color_scheme": "light purple, teal, yellow, and white"
+      },
+      "EAI logo.svg": {
+        "path": "C:/Users/USER/Downloads/phantomops_rag_optimised/version/assets\\logo\\EAI logo.svg",
+        "indexed_at": "2026-05-22T18:22:01",
+        "description": "eai logo",
+        "tags": [
+          "eai",
+          "logo"
+        ],
+        "background": "light",
+        "color_scheme": ""
+      }
+    },
+    "images": {}
+  }
+}

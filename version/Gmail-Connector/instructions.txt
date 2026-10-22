@@ -1,0 +1,35 @@
+Gmail Mailbox Connector — generates gmail_token.json for PhantomOps Version 4
+
+This connects PhantomOps to a Gmail mailbox. It reads the Google OAuth client
+values from the PhantomOps .env automatically, opens the Google sign-in page,
+and saves gmail_token.json into the PhantomOps folder — no typing, no
+copy-paste.
+
+ONE-TIME PREP (in the main PhantomOps Version 4 folder)
+  Open .env and confirm these are filled in (from a Google Cloud OAuth
+  "Desktop app" client):
+      GMAIL_CLIENT_ID=...
+      GMAIL_CLIENT_SECRET=...
+  These are product-level values, already provided with this package — not
+  something you create per mailbox. If they're blank, see
+  ONE_TIME_ADMIN_SETUP.txt in this folder (a one-time setup for whoever
+  administers PhantomOps, not for individual testers).
+
+HOW TO RUN
+  Option A (easiest): just run start.bat in the PhantomOps folder, with
+  email_provider: gmail set in agent_config.yaml. The first time, if no
+  mailbox is connected, it launches this sign-in automatically.
+
+  Option B: double-click run.bat in THIS folder to connect on its own.
+
+WHAT HAPPENS
+  1. A browser window opens at the Google sign-in page.
+  2. Sign in with the AGENT MAILBOX (the inbox PhantomOps reads/replies from)
+     and click Allow.
+  3. gmail_token.json is saved into the PhantomOps Version 4 folder. Done.
+
+SWITCH TO A DIFFERENT MAILBOX
+  Double-click  signout.bat  in this folder. It removes the current mailbox's
+  saved token and offers to connect a new one right away.
+
+For a full step-by-step walkthrough, see MANAGER_GUIDE.txt in this folder.

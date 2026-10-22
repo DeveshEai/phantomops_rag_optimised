@@ -1,0 +1,33 @@
+Outlook Mailbox Connector — generates outlook_token.txt for PhantomOps Version 4
+
+This connects PhantomOps to a Microsoft 365 / Outlook mailbox. It reads the Azure
+app IDs from the PhantomOps .env automatically, opens the Microsoft sign-in page,
+and saves outlook_token.txt into the PhantomOps folder — no typing, no copy-paste.
+
+ONE-TIME PREP (in the main PhantomOps Version 4 folder)
+  Open .env and fill in (from your Azure app registration):
+      OUTLOOK_CLIENT_ID=...
+      OUTLOOK_CLIENT_SECRET=...
+      OUTLOOK_TENANT_ID=...
+  The Azure app's redirect URI must include:  http://localhost:8000
+
+HOW TO RUN
+  Option A (easiest): just run start.bat in the PhantomOps folder. The first time,
+  if no mailbox is connected, it launches this sign-in automatically.
+
+  Option B: double-click run.bat in THIS folder to connect on its own.
+
+WHAT HAPPENS
+  1. A browser window opens at the Microsoft sign-in page (account picker).
+  2. Sign in with the AGENT MAILBOX (the inbox PhantomOps reads/replies from) and
+     click Accept.
+  3. The browser shows "PhantomOps is connected" — close that tab.
+  4. outlook_token.txt is saved into the PhantomOps Version 4 folder. Done.
+
+SWITCH TO A DIFFERENT MAILBOX
+  Double-click  signout.bat  in this folder. It removes the current mailbox's
+  saved token and offers to connect a new one right away. (Make sure PhantomOps /
+  start.bat is not running first.) You can also just run run.bat again after
+  signing out.
+
+For a full step-by-step walkthrough, see MANAGER_GUIDE.txt in this folder.

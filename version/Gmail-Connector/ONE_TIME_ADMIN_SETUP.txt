@@ -1,0 +1,78 @@
+============================================================
+  PhantomOps — Gmail: One-Time Google Cloud Setup
+  (for whoever administers PhantomOps, NOT for individual testers)
+============================================================
+
+Do this ONCE, ever, for the whole PhantomOps product — not once per mailbox,
+not once per tester. It creates ONE Google OAuth "app identity" (a Client ID
+and Client Secret) that every PhantomOps delivery then ships with, pre-filled
+in .env. After this, connecting a Gmail mailbox is just: run start.bat, a
+browser opens, sign in with the agent's Gmail address, click Allow. No
+tester, manager, or IT person downstream of this step ever sees Google Cloud
+Console.
+
+This is the exact same relationship OUTLOOK_CLIENT_ID/_SECRET/_TENANT_ID
+already have in every PhantomOps delivery — someone registered one Azure app
+once; every Outlook mailbox connects against that same shared app. This is
+the Gmail equivalent, and only needs doing once (or once per Google Cloud
+project you want to isolate deliveries under).
+
+------------------------------------------------------------
+STEPS (about 5 minutes)
+------------------------------------------------------------
+  1. Go to https://console.cloud.google.com/apis/credentials
+     (sign in with whichever Google account should own this — a company
+     account, not a personal one, if you want it to outlive any one person).
+
+  2. Create a project (or pick an existing one) — top-left project selector.
+
+  3. Left menu: APIs & Services -> Library. Search for and ENABLE both:
+       "Gmail API"
+       "Google Calendar API"
+
+  4. Left menu: APIs & Services -> OAuth consent screen.
+       - User type: External (works for any Gmail address) or Internal (if
+         restricting to a Google Workspace domain).
+       - Fill in the required app name / support email fields.
+       - Under "Test users", add every agent mailbox address you expect to
+         connect (each mailbox that will run PhantomOps needs to be listed
+         here, or sign-in will be blocked with "Access blocked"). You can
+         add more later as new mailboxes come online.
+
+  5. Left menu: APIs & Services -> Credentials -> "+ Create Credentials" ->
+     "OAuth client ID".
+       - Application type: "Desktop app". Name it something recognisable,
+         e.g. "PhantomOps".
+
+  6. After it's created, Google shows a Client ID and Client Secret on
+     screen (no file to download — that's it, those two values are the
+     whole thing).
+
+------------------------------------------------------------
+WHERE THESE VALUES GO
+------------------------------------------------------------
+  Paste them into EVERY PhantomOps delivery's .env file (same folder as
+  start.bat), exactly like the OUTLOOK_CLIENT_ID/_SECRET/_TENANT_ID values
+  already are:
+
+        GMAIL_CLIENT_ID=<paste the Client ID>
+        GMAIL_CLIENT_SECRET=<paste the Client Secret>
+
+  From here on, this is a one-time, product-level constant — every future
+  PhantomOps package ships with these already filled in, same as Outlook's
+  values. Individual testers never touch this file's Google section or
+  Google Cloud Console at all; see MANAGER_GUIDE.txt for their experience.
+
+------------------------------------------------------------
+ONGOING: ADDING NEW AGENT MAILBOXES
+------------------------------------------------------------
+  Each NEW Gmail address that will run PhantomOps must be added under
+  "Test users" on the OAuth consent screen (step 4) before it can sign in —
+  otherwise Google blocks it with "Access blocked: this app's request is
+  invalid". This is the one recurring admin task; everything else here is
+  truly one-time.
+
+  (If this becomes frequent, consider publishing the OAuth consent screen
+  instead of leaving it in "Testing" mode — Google's own docs cover the
+  verification requirements for that; not needed for a handful of internal
+  mailboxes.)

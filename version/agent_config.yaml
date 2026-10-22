@@ -1,0 +1,107 @@
+# ════════════════════════════════════════════════════════════════
+#  PhantomOps — Agent Configuration
+#  Edit and save; changes apply on the NEXT email (no restart needed).
+#  Precedence: this file → .env → built-in default.
+# ════════════════════════════════════════════════════════════════
+
+# Name used in signatures, greetings, and the CC "was I addressed?" check.
+agent_name: Sally
+
+# Company identity shown in email signatures, generated documents/PPTs, and
+# the LLM's own persona in write prompts. Optional — falls back to the
+# defaults below if unset (existing deployments are unaffected).
+company:
+  name: EAI Systems Pvt. Ltd.
+  short: EAI SYSTEMS
+  email: info@eaisystems.com
+  web: www.eaisystems.com
+
+# ── Presentations (PPT) ──────────────────────────────────────────
+# Include company logo on cover and slide headers. Set to false to disable.
+ppt_include_logo: true
+
+# ── Mailbox ──────────────────────────────────────────────────────
+# Which email account the agent monitors and replies from. Credentials for
+# each live in .env (OUTLOOK_CLIENT_ID/SECRET/TENANT_ID, or GMAIL_CLIENT_ID/
+# SECRET — same pattern, both just plain values, no file to place) plus the
+# gmail_token.json / outlook_token.txt each connector generates. This just
+# picks which set gets used. UNLIKE the settings below, this does NOT
+# hot-reload: the mailbox connection authenticates once when the agent
+# starts, so a change here only takes effect after restarting the agent process.
+#   options:  outlook | gmail
+email_provider: outlook
+
+# Active model. Groq is the default. Pin ONE provider here, or set "" for
+# Auto (fan out across every configured provider). "local" is NOT included in
+# Auto fan-out (must be pinned explicitly) since it depends on a local Ollama
+# server being installed and running — see provider_models.local below.
+#   options:  "" (Auto)  |  groq  |  gemini  |  claude  |  openai  |  local
+agent_model: groq
+
+# Exact model variant used when each provider runs:
+provider_models:
+  groq: openai/gpt-oss-120b
+  #   groq options:   openai/gpt-oss-120b | qwen/qwen3.8-27b | allam-2-7b
+  gemini: gemini-2.5-pro
+  #   gemini options: gemini-3.5-flash | gemini-3.1-pro-preview | gemini-3.1-flash-lite | gemini-3-flash | gemini-2.5-pro
+  claude: claude-sonnet-4-6
+  #   claude options: claude-opus-4-8 | claude-opus-4-7 | claude-opus-4-6 | claude-sonnet-4-6 | claude-haiku-4-5-20251001
+  openai: gpt-4o
+  #   openai options: gpt-5.4 | gpt-5.4-pro | gpt-5.4-mini | gpt-5.4-nano | gpt-4o | gpt-4o-mini | o1-mini | o3-mini
+  local: qwen2.5:14b-instruct
+  #   local runs against Ollama (http://127.0.0.1:11434 by default, override with
+  #   OLLAMA_BASE_URL in .env). No API key needed, but the model must be pulled
+  #   first: `ollama pull qwen2.5:14b-instruct` (or whichever tag you set here).
+  local_vision: llava
+  #   Vision needs its OWN model — the text model above isn't multimodal.
+  #   Pull one first: `ollama pull llava` (or bakllava | llama3.2-vision |
+  #   qwen2.5vl | moondream). Used only when vision_provider is set to "local".
+
+# Vision provider for image/logo auto-tagging. "local" runs on Ollama using
+# provider_models.local_vision above — no API key needed, but (like agent_model/
+# routing_model) it's opt-in only: never tried as an automatic fallback if the
+# preferred cloud provider fails, since a machine without Ollama running would
+# otherwise stall every asset-tagging call trying to reach it.
+#   options:  groq | gemini | claude | openai | local
+vision_provider: openai
+
+# Only these senders can trigger the agent. Full emails and/or whole
+# domains (prefix a domain with "@"). This list is the LIVE allowlist and
+# OVERRIDES SENDER_ALLOWLIST in .env. An EMPTY list fails CLOSED — the agent
+# replies to NOBODY (safe default for an autonomous agent that sends mail and
+# books meetings). To deliberately reply to every sender, leave this empty AND
+# set `allow_all_senders: true` below (or ALLOW_ALL_SENDERS=true in .env).
+sender_allowlist:
+  - siddhant.rane@eaisystems.com
+  - devesh.pawar@eaisystems.com
+  - mohammedamin.shaikh@eaisystems.com
+  - siddhi.pal@eaisystems.com
+  - mark.klagent@gmail.com
+
+# Reply to ANY sender when sender_allowlist is empty. Default false (deny all).
+# Only takes effect when the allowlist is empty; ignored otherwise.
+allow_all_senders: false
+
+# ── Email Routing ────────────────────────────────────────────────
+# LLM provider used to decide which agent an email is addressed to.
+# "local" runs routing on Ollama using the SAME model name as replies —
+# provider_models.local above (the one you `ollama pull`). No separate model
+# name to set. Must be pulled + Ollama running, and named explicitly here
+# (never auto-selected).
+#   options:  groq | gemini | claude | openai | local
+routing_model: openai
+
+# The OTHER AI assistants that share this mailbox (not this agent itself).
+# Email addressed to one of these names is filed under a matching Gmail
+# label / Outlook folder of that name (auto-created) and left for them;
+# email addressed to no assistant at all is skipped. Add or rename freely.
+assistant_agents:
+  - claude
+
+# GUARDRAIL: the agent only emails/invites people inside these domain(s). It
+# will NEVER invite an address outside this list to a MEETING, and NEVER CC an
+# outside address on a REPLY (external recipients are dropped, internal kept).
+# Defaults to eaisystems.com even if this is left empty (the guardrail never
+# turns off). To allow more domains, add them below, one per line.
+meeting_attendee_domains:
+  - eaisystems.com

@@ -1,0 +1,81 @@
+============================================================
+  PhantomOps Version 4 — Connect the Gmail Mailbox
+  Manager Guide
+============================================================
+
+This connects PhantomOps to the Gmail mailbox it will read and reply from. Do
+it ONCE. It creates a file called  gmail_token.json  in the PhantomOps
+Version 4 folder — that file is PhantomOps's saved permission to use the
+mailbox.
+
+------------------------------------------------------------
+BEFORE YOU START
+------------------------------------------------------------
+- PhantomOps Version 4 is installed (you have run install.bat once).
+- agent_config.yaml has  email_provider: gmail  set (change it via the
+  Settings Control Center - double-click settings.bat - or edit
+  agent_config.yaml directly).
+- The two Google values are already filled into the  .env  file in the main
+  PhantomOps Version 4 folder (provided to you):
+        GMAIL_CLIENT_ID=...
+        GMAIL_CLIENT_SECRET=...
+  If either is blank, ask whoever provided this package for the values.
+
+------------------------------------------------------------
+CONNECT THE MAILBOX
+------------------------------------------------------------
+  1. Double-click  start.bat  in the main PhantomOps Version 4 folder.
+     (First run only: because no mailbox is connected yet and email_provider
+     is gmail, it automatically opens the Google sign-in. You can also
+     double-click  run.bat  in this Gmail-Connector folder to connect on its
+     own.)
+
+  2. A browser window opens with a Google sign-in page.
+       - Sign in as the AGENT MAILBOX — the inbox PhantomOps should read and
+         reply from (for example agent@yourcompany.com), NOT your personal
+         account.
+       - Click Allow on the permissions screen.
+
+  3. The browser confirms sign-in — gmail_token.json is now saved in the
+     PhantomOps Version 4 folder.
+
+  4. PhantomOps then starts polling automatically. You should see:
+        [EMAIL] Provider: Gmail
+        [Init] Mailbox address: <the agent mailbox>
+        ... polling ...
+     Leave that window open — that is PhantomOps running. To stop it, close it.
+
+------------------------------------------------------------
+CHECK IT WORKS
+------------------------------------------------------------
+  From a different account, send a short email to the agent mailbox. Within
+  about 30 seconds PhantomOps should reply.
+
+------------------------------------------------------------
+CONNECT A DIFFERENT MAILBOX (switch accounts)
+------------------------------------------------------------
+  1. Stop PhantomOps (close the start.bat window).
+  2. In this Gmail-Connector folder, double-click  signout.bat .
+       It removes the current saved token and offers to connect a new
+       mailbox right away.
+  (Manual equivalent: delete gmail_token.json from the PhantomOps folder,
+   then run run.bat.)
+
+------------------------------------------------------------
+IF SOMETHING GOES WRONG
+------------------------------------------------------------
+  - "Missing GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET" : these should already be
+    filled in .env — ask whoever provided this package to check ONE_TIME_
+    ADMIN_SETUP.txt in this folder (a one-time setup they only need to do
+    once, ever, not per mailbox).
+  - "Access blocked: this app's request is invalid" during sign-in : this
+    agent mailbox hasn't been added to the allowed sign-in list yet — ask
+    whoever administers PhantomOps to add it (see ONE_TIME_ADMIN_SETUP.txt,
+    "Adding new agent mailboxes").
+  - "This mailbox is already connected" : a mailbox is already linked. To
+    change it, run signout.bat first (see above).
+  - The window closes too fast to read : run  run.bat  in this folder
+    instead — it stays open and shows any message.
+
+>> KEEP IT PRIVATE: gmail_token.json grants access to the mailbox. Treat the
+   whole PhantomOps Version 4 folder as confidential; never share that file.

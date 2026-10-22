@@ -1,0 +1,78 @@
+# ==============================================================================
+# PhantomOps - Root .gitignore
+# ==============================================================================
+
+# Python Virtual Environments (Keep locally, do NOT upload)
+.venv/
+venv/
+ENV/
+env/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environment Variables & Secrets (NEVER leak API keys)
+**/.env
+**/.env.*
+!**/.env.example
+.env
+.env.*
+!.env.example
+
+# OAuth Credentials & Access Tokens
+**/token.json
+**/credentials.json
+**/gmail_token.json
+**/outlook_token.txt
+**/outlook_token.txt*
+token.json
+credentials.json
+gmail_token.json
+outlook_token.txt
+outlook_token.txt*
+
+# Persistent Databases & Vector DBs
+database/*
+!database/.gitkeep
+**/chroma_db/
+chroma_db/
+*.sqlite3
+*.db
+*.db-journal
+
+# Runtime Outputs, Logs & Drop Points
+output/logs/*
+!output/logs/.gitkeep
+output/ppts/*
+!output/ppts/.gitkeep
+output/proposals/*
+!output/proposals/.gitkeep
+output/inbox/*
+!output/inbox/.gitkeep
+version/output/*
+!version/output/.gitkeep
+delivered/*
+!delivered/.gitkeep
+intake/*
+!intake/.gitkeep
+*.log
+
+# Scratch / Runtime Uploads
+scratch/
+test_output/
+uploads/
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo

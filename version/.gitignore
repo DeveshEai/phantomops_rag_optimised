@@ -1,0 +1,48 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment Variables (IMPORTANT: Do not leak API keys)
+.env
+.env.delivery
+
+# OAuth credentials & tokens (NEVER commit these)
+token.json
+credentials.json
+gmail_token.json
+outlook_token.txt
+outlook_token.txt.bak*
+
+# Vector Database (Local data, should not be in git)
+chroma_db/
+
+# Output Files
+output/
+
+# Uploaded user files (runtime only)
+uploads/
+
+# Personal Resume Files
+data/*.pdf
+data/*.docx
+data/*.txt
+!assets/letterhead/*.docx
+
+# Docker image exports (large binary files)
+*.tar
+
+# Scratch / local test scripts
+scratch/
+test_output/
+
+# Planning / design docs (local only)
+phase2_task_design.md
+new_changes.md
+# OS specific
+.DS_Store
+Thumbs.db

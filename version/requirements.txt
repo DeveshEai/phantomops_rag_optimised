@@ -1,0 +1,47 @@
+# ── LLM & Agent ─────────────────────────────────────────────────────
+langchain-core>=0.2.0
+langchain-groq>=0.1.0
+langchain-anthropic>=0.1.0
+langchain-google-genai>=1.0.0
+langchain-openai>=0.1.0
+langchain-ollama>=0.2.0            # local models via Ollama (agent_model: local)
+langgraph>=0.0.60
+
+# ── RAG / Knowledge Base ────────────────────────────────────────────
+chromadb>=0.5.0                    # local persistent vector store
+rank-bm25>=0.2.2                   # lexical/keyword search, fused with vector search in retrieve()
+trafilatura>=1.8.0                 # clean text extraction from fetched web links
+
+# ── Web Search ───────────────────────────────────────────────────────
+tavily-python>=0.3.0
+google-search-results>=2.4.2
+requests>=2.31.0
+
+# ── Presentation & Documents ─────────────────────────────────────────
+python-pptx>=0.6.21
+python-docx>=1.1.0
+docx2pdf>=0.1.8
+openpyxl>=3.1.0
+pandas>=2.0.0
+pdfplumber>=0.10.0
+PyMuPDF>=1.23.0
+pytesseract>=0.3.10
+Pillow>=10.0.0
+
+# ── Email Providers ────────────────────────────────────────────────────
+O365>=2.0.33                       # Outlook / Microsoft Graph
+google-api-python-client>=2.100.0  # Gmail API
+google-auth-oauthlib>=1.2.0        # Gmail OAuth flow
+google-auth-httplib2>=0.2.0
+
+# ── Storage ──────────────────────────────────────────────────────────
+# SQLite is built into Python — no external database package needed.
+
+# ── UI ───────────────────────────────────────────────────────────────
+streamlit>=1.35.0
+
+# ── Config ───────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+PyYAML>=6.0                        # agent_config.yaml (operator settings)
+ruamel.yaml>=0.18.0                 # agent_config.yaml writes from the Settings UI — preserves comments
+tzdata>=2024.1                     # IANA timezones for meeting scheduling (slim Docker lacks them)
