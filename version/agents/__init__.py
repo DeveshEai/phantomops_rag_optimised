@@ -316,6 +316,23 @@ def _extract_failed_generation_tool_call(error: Exception) -> tuple[str, dict] |
     if not failed_generation:
         return None
 
+    # Try 1: JSON payload format e.g. {"name": "open", "arguments": {"id": "..."}}
+    try:
+        fg_data = json.loads(failed_generation)
+        if isinstance(fg_data, dict) and "name" in fg_data:
+            t_name = fg_data.get("name", "")
+            t_args = fg_data.get("arguments", {})
+            if isinstance(t_args, str):
+                try:
+                    t_args = json.loads(t_args)
+                except Exception:
+                    t_args = {}
+            if t_name and isinstance(t_args, dict):
+                return t_name, t_args
+    except Exception:
+        pass
+
+    # Try 2: XML format <function=name {...} </function>
     match = re.search(
         r"<function=([A-Za-z_][A-Za-z0-9_]*)\s*(\{[\s\S]*\})\s*</function>",
         failed_generation,
@@ -329,6 +346,7 @@ def _extract_failed_generation_tool_call(error: Exception) -> tuple[str, dict] |
         return None
 
     return match.group(1), args
+
 
 
 def run_tool_loop(
@@ -387,6 +405,19 @@ def run_tool_loop(
         tool_name, args = recovered
         fn = tool_map.get(tool_name)
         if not fn:
+            _alias = {
+                "commentary": "open",
+                "comment": "open",
+                "browse": "open",
+                "view": "open",
+                "read": "open",
+                "search": "tavily_search" if "tavily_search" in tool_map else "serpapi_search",
+            }.get(tool_name.lower())
+            if _alias and _alias in tool_map:
+                print(f"[{agent_name}] Remapped failed tool '{tool_name}' -> '{_alias}'")
+                tool_name = _alias
+                fn = tool_map.get(tool_name)
+        if not fn:
             print(f"[{agent_name}] Recovered unknown tool from failed_generation: {tool_name}")
             return False
 
@@ -400,9 +431,17 @@ def run_tool_loop(
                 final_answer = str(result)
             return True
         except Exception as tool_error:
-            final_answer = f"Tool error: {tool_error}"
             print(f"[{agent_name}] Recovered tool {tool_name} raised: {tool_error}")
+            # Do not overwrite final_answer with error string; salvage previous research/messages
+            prior = []
+            for m in messages:
+                c = getattr(m, "content", "")
+                if c and isinstance(c, str) and len(c.strip()) > 20 and not getattr(m, "tool_calls", None):
+                    prior.append(c.strip())
+            if prior:
+                final_answer = "\n\n".join(prior)
             return True
+
 
     for iteration in range(max_iterations):
         try:
@@ -449,6 +488,39 @@ def run_tool_loop(
                 print(f"[{agent_name}] Unknown tool requested: {tc['name']}")
 
             messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
+
+    # If the iteration limit was reached or loop ended without a final answer text,
+    # synthesize a clean final answer from all gathered findings.
+    if not final_answer and any(isinstance(m, ToolMessage) for m in messages):
+        tool_findings = []
+        for m in messages:
+            if isinstance(m, ToolMessage) and m.content:
+                c = str(m.content).strip()
+                if c and not c.startswith("Tool error:"):
+                    tool_findings.append(c)
+
+        if tool_findings:
+            combined_findings = "\n\n---\n\n".join(tool_findings)
+            print(f"[{agent_name}] Synthesizing {len(tool_findings)} gathered research findings...")
+            try:
+                synth_llm = build_agent_llm(model_label, temperature)
+                synth_resp = invoke_with_tpm_retry(
+                    synth_llm,
+                    [
+                        SystemMessage(content="You are a research assistant. Provide a detailed, factual synthesis of the gathered research findings below answering the user's request. Include dates, names, and specific events. Output plain text only."),
+                        HumanMessage(content=f"USER REQUEST:\n{user_message}\n\nRESEARCH FINDINGS GATHERED:\n{combined_findings[:12000]}"),
+                    ],
+                    agent_name=agent_name,
+                    max_tries=2,
+                )
+                final_answer = extract_text_content(synth_resp)
+                if final_answer:
+                    print(f"[{agent_name}] Synthesized gathered findings ({len(final_answer)} chars)")
+            except Exception as e:
+                print(f"[{agent_name}] Synthesis call failed ({e}) — using raw tool findings")
+                final_answer = combined_findings
+        else:
+            final_answer = ""
 
     return final_answer, output_files
 

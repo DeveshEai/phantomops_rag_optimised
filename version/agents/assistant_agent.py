@@ -1925,6 +1925,11 @@ def run(context: dict) -> dict:
         "Return a detailed research brief with SPECIFIC numbers, facts, dates, and sources, and "
         "note the publish date of each source so stale information can be spotted. "
         "These exact figures will be used in the final content — be precise.\n\n"
+        "If you need to inspect a specific webpage URL from search results, you may use the `open` tool "
+        "(open at most 1 or 2 relevant links). However, if the search snippets already contain sufficient "
+        "information to answer the request, synthesize your research brief immediately without opening URLs unnecessarily.\n\n"
+        "Only call the tools available in your tools parameter: tavily_search, serpapi_search, open, open_file, find_in_page. "
+        "Do NOT call or invent any other tool names (such as 'commentary').\n\n"
         "If the request can be fully answered from the attached document and general knowledge "
         "without needing current web data, reply exactly: 'No search needed.'"
     )
@@ -1973,7 +1978,10 @@ def run(context: dict) -> dict:
         print(f"[{agent_name}] GATHER skipped — request answerable without web search or multi-part KB lookup")
     if not is_conversion and (_needs_search or _needs_multi_kb_lookup):
         try:
-            gather_tools = [serpapi_search, tavily_search]
+            from tools.web_search import serpapi_search, tavily_search, open_url, open_file, find_in_page
+            gather_tools = [serpapi_search, tavily_search, open_url, open_file, find_in_page]
+
+
             if _uses_rag:
                 from tools.rag_search import search_knowledge_base
                 gather_tools.append(search_knowledge_base)
@@ -1983,7 +1991,7 @@ def run(context: dict) -> dict:
                 tools=gather_tools,
                 model_label=model_label,
                 temperature=0.2,
-                max_iterations=8,
+                max_iterations=10,
                 agent_name=f"{agent_name}_GATHER",
             )
             if search_result and "no search needed" not in search_result.lower():

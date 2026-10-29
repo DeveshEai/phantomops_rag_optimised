@@ -19,6 +19,7 @@ _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ─────────────────────────────────────────────
 SERPAPI_KEY    = os.getenv("SERPAPI_KEY",    "")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 
 def _find_shared_dir(name: str) -> str:
     """Same convention as the shared .venv in install.bat/start.bat: prefer an
@@ -94,7 +95,8 @@ ASSETS_DIR = os.getenv("ASSETS_DIR") or os.path.join(_BASE_DIR, "assets")
 ASSETS_TEMPLATES_DIR   = os.path.join(ASSETS_DIR, "templates")
 ASSETS_LETTERHEADS_DIR = os.path.join(ASSETS_DIR, "letterhead")
 ASSETS_LOGOS_DIR       = os.path.join(ASSETS_DIR, "logo")
-ASSETS_IMAGES_DIR      = os.path.join(ASSETS_DIR, "images")
+ASSETS_IMAGES_DIR        = os.path.join(ASSETS_DIR, "images")
+ASSETS_IMAGES_CACHE_DIR  = os.path.join(ASSETS_IMAGES_DIR, "cache")
 
 # ─────────────────────────────────────────────
 # LLM PROVIDER SETTINGS
@@ -192,25 +194,61 @@ def load_agent_config() -> dict:
         return {}
     if _agent_cfg_cache["mtime"] != mt:
         try:
-            import yaml
-            # utf-8-sig (not utf-8): tolerates a BOM if Notepad or another Windows
-            # editor wrote one when the file was last hand-edited. (PyYAML strips a
-            # leading BOM itself, so this is belt-and-braces for safe_load — but
-            # set_agent_config_value()'s ruamel round-trip loader below gets the
-            # same treatment, where it is not guaranteed.)
-            with open(AGENT_CONFIG_PATH, encoding="utf-8-sig") as f:
-                _agent_cfg_cache["data"] = yaml.safe_load(f) or {}
+            try:
+                import yaml
+                with open(AGENT_CONFIG_PATH, encoding="utf-8-sig") as f:
+                    _agent_cfg_cache["data"] = yaml.safe_load(f) or {}
+            except ImportError:
+                try:
+                    from ruamel.yaml import YAML
+                    _ryaml = YAML(typ="safe")
+                    with open(AGENT_CONFIG_PATH, encoding="utf-8-sig") as f:
+                        _agent_cfg_cache["data"] = _ryaml.load(f) or {}
+                except Exception:
+                    data = {}
+                    with open(AGENT_CONFIG_PATH, encoding="utf-8-sig") as f:
+                        cur_dict = data
+                        cur_key = None
+                        for raw_line in f:
+                            sline = raw_line.strip()
+                            if not sline or sline.startswith("#"):
+                                continue
+                            indent = len(raw_line) - len(raw_line.lstrip())
+                            if ":" in sline:
+                                k, v = sline.split(":", 1)
+                                k = k.strip()
+                                v = v.strip().split("#")[0].strip()
+                                if not v and indent == 0:
+                                    cur_dict[k] = {}
+                                    cur_key = k
+                                elif indent > 0 and cur_key and isinstance(cur_dict.get(cur_key), dict):
+                                    if v.lower() == "true":
+                                        val = True
+                                    elif v.lower() == "false":
+                                        val = False
+                                    elif v.isdigit():
+                                        val = int(v)
+                                    else:
+                                        val = v.strip("'\"")
+                                    cur_dict[cur_key][k] = val
+                                else:
+                                    cur_key = None
+                                    if v.lower() == "true":
+                                        val = True
+                                    elif v.lower() == "false":
+                                        val = False
+                                    elif v.isdigit():
+                                        val = int(v)
+                                    else:
+                                        val = v.strip("'\"")
+                                    data[k] = val
+                    _agent_cfg_cache["data"] = data
             _agent_cfg_cache["mtime"] = mt
             print("[CONFIG] Loaded agent_config.yaml")
         except Exception as e:
-            # ASCII only, deliberately: this line reports why the config was
-            # unusable, and it must survive a cp1252 stdout (Windows console or a
-            # redirected/piped capture on a Python without UTF-8 mode). A non-ASCII
-            # character here raises UnicodeEncodeError *inside the except handler*,
-            # which replaces a readable diagnostic with an opaque crash — exactly
-            # when the operator most needs to see what went wrong.
             print(f"[CONFIG] Failed to read agent_config.yaml ({e}) - using .env/defaults")
     return _agent_cfg_cache["data"]
+
 
 
 def set_agent_config_value(key: str, value) -> None:
@@ -319,6 +357,34 @@ def is_ppt_logo_enabled() -> bool:
         return bool(val) if not isinstance(val, str) else val.strip().lower() in ("true", "1", "yes")
     env_val = os.getenv("PPT_INCLUDE_LOGO", "true").strip().lower()
     return env_val in ("true", "1", "yes")
+
+
+def get_ppt_rotation_config() -> tuple[bool, int]:
+    """Check if presentation template rotation is enabled and how many templates to rotate (1-7).
+    Precedence: agent_config.yaml -> .env -> defaults (enabled=True, count=7)."""
+    cfg = load_agent_config()
+    enabled = True
+    rota_count = 7
+    if "ppt_template_rotation" in cfg:
+        r_cfg = cfg["ppt_template_rotation"]
+        if isinstance(r_cfg, dict):
+            enabled = bool(r_cfg.get("enabled", True))
+            try:
+                rota_count = int(r_cfg.get("rota_count", 7))
+            except (ValueError, TypeError):
+                rota_count = 7
+        elif isinstance(r_cfg, bool):
+            enabled = r_cfg
+    env_enabled = os.getenv("PPT_TEMPLATE_ROTATION", "").strip().lower()
+    if env_enabled in ("false", "0", "no"):
+        enabled = False
+    elif env_enabled in ("true", "1", "yes"):
+        enabled = True
+    env_count = os.getenv("PPT_ROTA_COUNT", "").strip()
+    if env_count.isdigit():
+        rota_count = int(env_count)
+    return enabled, max(1, min(rota_count, 10))
+
 
 
 def get_ollama_models() -> list:

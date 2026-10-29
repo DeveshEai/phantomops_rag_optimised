@@ -14,6 +14,7 @@ import os
 import re
 import base64
 import subprocess
+import shutil
 from datetime import datetime
 from core.config import PPT_OUTPUT_DIR, get_company_info
 
@@ -268,6 +269,40 @@ section.lead p {
 section.lead strong {
   color: #ffffff;
 }
+
+section.lead h1, section.lead h2, section.lead p, section.lead strong {
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
+/* Real Photographs & Slide Images */
+img:not(.cover-logo) {
+  max-width: 100%;
+  max-height: 400px;
+  object-fit: cover;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  border: 1px solid #e2e8f0;
+  display: block;
+  margin: 0 auto;
+}
+
+.slide-img {
+  width: 100%;
+  max-height: 400px;
+  object-fit: cover;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  border: 1px solid #e2e8f0;
+  display: block;
+}
+
+.img-caption {
+  font-size: 0.78rem;
+  color: #64748b;
+  text-align: center;
+  margin-top: 6px;
+  font-style: italic;
+}
 """
 
 
@@ -345,6 +380,27 @@ Contact: info@eaisystems.com
 - NEVER invent or hallucinate fake employee names (e.g. "Arjun Mehta", "Sally Patel"). Use only the official company contact: info@eaisystems.com.
 - NEVER output placeholder images, QR codes, or dummy URLs (e.g. via.placeholder.com).
 - NEVER echo conversational remarks, instructions, or trailing email phrases like "Let's build", "Please build", "Here is the presentation", etc. Output ONLY clean Marp Markdown.
+
+8. REAL PHOTOGRAPHS & CONTENT-AWARE VISUAL ASSETS:
+When presenting topics that benefit from real-world photography (e.g. nature, trees, science, healthcare, technology, education, wildlife, architecture, business collaboration):
+- For suitable slides (aim for approx. 60–80% of content slides where photography enhances understanding, omitting pure data tables, metric cards, and the Thank You slide):
+  You may declare the visual requirement using one of these formats:
+  A. Directive comment:
+     <!-- image_query: "oak pine maple trees in natural environments", position: "right", alt: "Examples of oak and pine trees" -->
+  B. Split layout with standard markdown query:
+     <div class="grid-2">
+     <div>
+     - **Key Pillar:** Concrete explanation.
+     - **Second Pillar:** Detailed insight.
+     </div>
+     <div>
+     ![Subject description](query: oak pine maple trees in natural environments)
+     </div>
+     </div>
+  C. Background photograph for the title/cover slide:
+     <!-- _backgroundImage: "query: lush green forest canopy landscape" -->
+- Choose specific, descriptive photograph queries illustrating the specific concept of THAT slide (e.g. 'tree trunk branches roots leaves', 'seedling sprout growing in forest soil', 'aerial photograph of forest clearing deforestation', 'people planting young trees forest conservation'), never generic presentation title repetitions.
+- The pipeline will search, download real high-resolution photographs, cache them locally, and replace these queries with local image paths.
 """
 
 
@@ -440,10 +496,316 @@ def _get_logo_path() -> str:
     return ""
 
 
-def _ensure_marp_frontmatter(content: str, title: str) -> str:
+def derive_slide_image_query(slide_chunk: str, presentation_topic: str = "") -> str:
+    """
+    Derive a specific, content-aware image search query from a slide's content.
+    Extracts heading, subheadings, and conceptual keywords while filtering generic noise.
+    """
+    # 1. Check for explicit directive or inline query tag
+    m = re.search(r"<!--\s*image_query:\s*[\"']?([^\"',\n]+)[\"']?", slide_chunk, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+
+    m_bg = re.search(r"<!--\s*_backgroundImage:\s*(?:url\()?[\"']?query:\s*([^\"'\)\n]+)[\"']?\)?", slide_chunk, re.IGNORECASE)
+    if m_bg and m_bg.group(1).strip():
+        return m_bg.group(1).strip()
+
+    m_inline = re.search(r"!\[[^\]]*\]\((?:query:\s*([^)]+))\)", slide_chunk, re.IGNORECASE)
+    if m_inline and m_inline.group(1).strip():
+        return m_inline.group(1).strip()
+
+    # 2. Extract slide title (# ...) and subtitle (## ...)
+    title_match = re.search(r"^#\s+([^\n]+)", slide_chunk, re.MULTILINE)
+    slide_title = title_match.group(1).strip() if title_match else ""
+    slide_title = re.sub(r"[*_`#]", "", slide_title).strip()
+
+    sub_match = re.search(r"^##\s+([^\n]+)", slide_chunk, re.MULTILINE)
+    slide_subtitle = sub_match.group(1).strip() if sub_match else ""
+    slide_subtitle = re.sub(r"[*_`#]", "", slide_subtitle).strip()
+
+    # If it's a cover slide or title-only slide
+    if "lead" in slide_chunk and slide_title:
+        base_topic = presentation_topic or slide_title
+        return f"{base_topic} nature landscape"
+
+    # Extract bullet points
+    bullet_lines = re.findall(r"^\s*[-*]\s+(.*)", slide_chunk, re.MULTILINE)
+    bullet_text = " ".join(re.sub(r"[*_`]", "", b) for b in bullet_lines)
+
+    # Domain-specific mappings for trees and natural topics (matching specification examples)
+    combined_context = (slide_title + " " + slide_subtitle + " " + bullet_text).lower()
+    topic_lower = (presentation_topic or "").lower()
+
+    t_lower = slide_title.lower()
+    if "tree" in combined_context or "forest" in combined_context or "tree" in topic_lower:
+        # Check slide title first for strongest conceptual match
+        if any(k in t_lower for k in ["type", "specie", "variety", "varieties"]):
+            return "oak pine and maple trees"
+        if any(k in t_lower for k in ["anatom", "structure", "trunk", "root", "branch", "leaf", "leaves"]):
+            return "tree trunk branches roots and leaves"
+        if any(k in t_lower for k in ["growth", "lifecycle", "life cycle", "stage", "develop"]):
+            return "seedling growing into a young tree"
+        if any(k in t_lower for k in ["deforest", "threat", "logging", "loss", "clearing"]):
+            return "aerial photograph of forest clearing"
+        if any(k in t_lower for k in ["conserv", "reforest", "protect", "restoration"]):
+            return "people planting young trees"
+        if any(k in t_lower for k in ["benefit", "ecolog", "ecosystem", "value"]):
+            return "forest canopy birds and wildlife"
+        if any(k in t_lower for k in ["intro", "overview", "world", "about"]):
+            return "mature trees in a green forest"
+
+        # Check combined slide context if title was generic
+        if any(k in combined_context for k in ["deforest", "logging", "clearing"]):
+            return "aerial photograph of forest clearing"
+        if any(k in combined_context for k in ["conserv", "reforest", "planting", "plant trees"]):
+            return "people planting young trees"
+        if any(k in combined_context for k in ["anatom", "trunk", "branch", "root", "leaf", "leaves"]):
+            return "tree trunk branches roots and leaves"
+        if any(k in combined_context for k in ["seedling", "sprout", "sapling"]):
+            return "seedling growing into a young tree"
+        if any(k in combined_context for k in ["oak", "pine", "maple"]):
+            return "oak pine and maple trees"
+        if any(k in combined_context for k in ["benefit", "ecolog", "canopy", "wildlife", "birds"]):
+            return "forest canopy birds and wildlife"
+        if any(k in combined_context for k in ["intro", "overview", "world", "about"]):
+            return "mature trees in a green forest"
+
+    # General topical synthesis from title + top bullet words for ANY topic
+    stop_words = {
+        "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with",
+        "by", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "can", "could", "should", "would", "may", "might", "must",
+        "shall", "will", "this", "that", "these", "those", "slide", "presentation",
+        "overview", "introduction", "summary", "conclusion", "next", "steps", "key",
+        "points", "features", "benefits", "details", "strategic", "executive", "roadmap",
+        "questions", "thank", "you", "prepared", "eai", "systems"
+    }
+
+    title_words = [w for w in re.findall(r"\b[A-Za-z]{3,}\b", slide_title) if w.lower() not in stop_words]
+    subtitle_words = [w for w in re.findall(r"\b[A-Za-z]{3,}\b", slide_subtitle) if w.lower() not in stop_words]
+    bullet_words = [w for w in re.findall(r"\b[A-Za-z]{3,}\b", bullet_text) if w.lower() not in stop_words]
+    topic_words = [w for w in re.findall(r"\b[A-Za-z]{3,}\b", presentation_topic) if w.lower() not in stop_words]
+
+    chosen = []
+    seen = set()
+    for w in topic_words + title_words + subtitle_words + bullet_words:
+        wl = w.lower()
+        if wl not in seen:
+            seen.add(wl)
+            chosen.append(w)
+            if len(chosen) >= 5:
+                break
+
+    if chosen:
+        return " ".join(chosen)
+
+    return slide_title or presentation_topic or "presentation photograph"
+
+
+def process_marp_images(markdown: str, title: str, cover_bg_gradient: str = None) -> str:
+    """
+    Inspect Marp markdown, identify visual requirements per slide, fetch real
+    photographs (via tools.image_provider), and insert them with valid Marp
+    layouts and local image paths before compilation.
+    """
+    try:
+        from tools.image_provider import fetch_relevant_image, validate_image_file
+    except Exception as e:
+        print(f"[Marp] Warning: Image provider unavailable ({e}) — rendering text slides")
+        return markdown
+
+    # Split slides by Marp slide delimiter
+    slide_chunks = re.split(r"\n---\s*\n", markdown)
+    processed_slides = []
+    content_img_count = 0
+    bg_grad = cover_bg_gradient or "linear-gradient(rgba(15, 23, 42, 0.78), rgba(30, 58, 138, 0.82))"
+
+    for idx, slide in enumerate(slide_chunks):
+        s = slide.strip()
+        if not s:
+            continue
+
+        # 1. Clean up invalid or broken local image references (Section 9)
+        def _clean_broken_image(match):
+            alt_txt = match.group(1)
+            img_target = match.group(2).strip()
+            if img_target.startswith("query:") or img_target.startswith("http"):
+                return match.group(0)
+            # Remove quotes around URL if present
+            clean_target = img_target.strip("\"'")
+            if not validate_image_file(clean_target):
+                print(f"[Marp] Removing invalid/broken image reference: {clean_target}")
+                return ""
+            return match.group(0)
+
+        s = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", _clean_broken_image, s)
+
+        # 2. Check slide types
+        is_lead = bool(re.search(r"<!--\s*_class:\s*lead\s*-->", s, re.IGNORECASE))
+        is_closing = bool(re.search(r"#\s*Thank\s*You", s, re.IGNORECASE))
+        has_table = bool(re.search(r"\|(?:\s*---|:---)", s)) or ("<table" in s.lower())
+        has_kpi = "kpi-card" in s or "kpi-number" in s
+        has_cards = bool(re.search(r'<div\s+class="grid-[23]">', s, re.IGNORECASE)) and ("<div class=\"card\">" in s)
+        has_code = "```" in s
+
+        # 3. Slide 1 (Cover / Title Slide)
+        if is_lead and idx == 0 and not is_closing:
+            # Check if LLM emitted query background directive e.g. <!-- _backgroundImage: "query: ..." -->
+            m_bg_query = re.search(
+                r"<!--\s*_backgroundImage:\s*(?:url\()?['\"]?query:\s*([^'\")\n]+)['\"]?\)?\s*-->",
+                s,
+                re.IGNORECASE,
+            )
+            if m_bg_query:
+                query_str = m_bg_query.group(1).strip()
+                img_data = fetch_relevant_image(query_str, orientation="landscape")
+                if img_data and img_data.get("local_path"):
+                    lp = img_data["local_path"]
+                    bg_directive = (
+                        f'<!-- _backgroundImage: "{bg_grad}, url(\'{lp}\')" -->\n'
+                        f'<!-- _backgroundSize: cover -->'
+                    )
+                    s = s[:m_bg_query.start()] + bg_directive + s[m_bg_query.end():]
+                    if img_data.get("photographer"):
+                        src_name = f"Photo by {img_data['photographer']} on Pexels" if img_data.get("source") == "pexels" else "Company Asset Library"
+                        s += f"\n\n<!-- Attribution: {src_name} -->"
+                processed_slides.append(s)
+                continue
+
+            has_bg = bool(re.search(r"<!--\s*_backgroundImage:", s, re.IGNORECASE))
+            if not has_bg:
+                cover_query = derive_slide_image_query(s, title)
+                img_data = fetch_relevant_image(cover_query, orientation="landscape")
+                if img_data and img_data.get("local_path"):
+                    lp = img_data["local_path"]
+                    bg_directive = (
+                        f'<!-- _backgroundImage: "{bg_grad}, url(\'{lp}\')" -->\n'
+                        f'<!-- _backgroundSize: cover -->\n'
+                    )
+                    s = re.sub(
+                        r"(<!--\s*_class:\s*lead\s*-->\s*\n)",
+                        r"\1" + bg_directive,
+                        s,
+                        count=1,
+                        flags=re.IGNORECASE,
+                    )
+                    if img_data.get("photographer"):
+                        src_name = f"Photo by {img_data['photographer']} on Pexels" if img_data.get("source") == "pexels" else "Company Asset Library"
+                        s += f"\n\n<!-- Attribution: {src_name} -->"
+            processed_slides.append(s)
+            continue
+
+        # 4. Skip closing slide, tables, KPI metrics, code slides, or card grids (Section 7)
+        if is_closing or has_table or has_kpi or has_code or has_cards:
+            processed_slides.append(s)
+            continue
+
+        # 5. Check for explicit image query directive
+        explicit_dir = re.search(
+            r"<!--\s*image_query:\s*[\"']?([^\"',\n]+)[\"']?(?:,\s*position:\s*[\"']?([a-zA-Z]+)[\"']?)?(?:,\s*alt:\s*[\"']?([^\"'\n]+)[\"']?)?\s*-->",
+            s,
+            re.IGNORECASE,
+        )
+        explicit_inline = re.search(r"!\[([^\]]*)\]\((?:query:\s*([^)]+))\)", s, re.IGNORECASE)
+
+        query = None
+        pos = "right"
+        alt = ""
+
+        if explicit_dir:
+            query = explicit_dir.group(1).strip()
+            pos = (explicit_dir.group(2) or "right").strip().lower()
+            alt = (explicit_dir.group(3) or "").strip()
+            # Strip directive from rendered slide text
+            s = s[:explicit_dir.start()] + s[explicit_dir.end():]
+        elif explicit_inline:
+            alt = explicit_inline.group(1).strip()
+            query = explicit_inline.group(2).strip()
+
+        # 6. Automatic content-aware visual selection for content slides with bullets (~60-80%)
+        has_bullets = bool(re.search(r"^\s*[-*]\s+", s, re.MULTILINE))
+        already_has_image = bool(re.search(r"!\[[^\]]*\]\([^)]+\)", s)) or ("<img " in s)
+
+        if query is None and has_bullets and not already_has_image:
+            query = derive_slide_image_query(s, title)
+            # Alternate layout position
+            pos = "right" if (content_img_count % 2 == 0) else "left"
+
+        if query:
+            img_data = fetch_relevant_image(query, orientation="landscape")
+            if img_data and img_data.get("local_path"):
+                local_path = img_data["local_path"]
+                alt_text = alt or img_data.get("alt_text") or query
+                img_tag = f'<img src="{local_path}" class="slide-img" alt="{alt_text}" />'
+                content_img_count += 1
+
+                # If explicit inline query was matched, replace it directly
+                if explicit_inline:
+                    s = s[:explicit_inline.start()] + img_tag + s[explicit_inline.end():]
+                else:
+                    # Transform bullet slide into clean split layout
+                    heading_match = re.search(r"^((?:#[^\n]+\n*)+)", s, re.MULTILINE)
+                    if heading_match and has_bullets and ('<div class="grid-' not in s):
+                        head_block = heading_match.group(1).strip()
+                        body_block = s[heading_match.end():].strip()
+
+                        if pos == "left":
+                            s = (
+                                f"{head_block}\n\n"
+                                f'<div class="grid-2">\n'
+                                f"<div>\n\n"
+                                f"{img_tag}\n\n"
+                                f"</div>\n"
+                                f"<div>\n\n"
+                                f"{body_block}\n\n"
+                                f"</div>\n"
+                                f"</div>"
+                            )
+                        else:
+                            s = (
+                                f"{head_block}\n\n"
+                                f'<div class="grid-2">\n'
+                                f"<div>\n\n"
+                                f"{body_block}\n\n"
+                                f"</div>\n"
+                                f"<div>\n\n"
+                                f"{img_tag}\n\n"
+                                f"</div>\n"
+                                f"</div>"
+                            )
+
+                # Attach concise attribution in speaker notes comment (Section 8)
+                if img_data.get("photographer"):
+                    src_str = f"Photo by {img_data['photographer']} on Pexels ({img_data.get('source_url', '')})" if img_data.get("source") == "pexels" else "Company Asset Library"
+                    s += f"\n\n<!-- Attribution: {src_str} -->"
+
+        processed_slides.append(s)
+
+    combined = "\n\n---\n\n".join(processed_slides)
+    # Ensure all local image references inside divs or layout blocks render cleanly as HTML img tags
+    combined = re.sub(
+        r'!\[([^\]]*)\]\(([A-Za-z]:[^)]+)\)',
+        r'<img src="\2" class="slide-img" alt="\1" />',
+        combined
+    )
+    return combined
+
+
+def _ensure_marp_frontmatter(content: str, title: str, bundle: dict = None) -> str:
     """Ensure the markdown has the complete Marp frontmatter, styles, logo, and sanitization."""
     company = get_company_info()
     company_name = company.get("name", "EAI Systems Pvt. Ltd.")
+
+    # Multi-template theme bundle resolution
+    if bundle is None:
+        try:
+            from tools.ppt_rota import peek_current_bundle
+            bundle = peek_current_bundle()
+        except Exception:
+            bundle = {}
+
+    css_theme = bundle.get("css_style") or MARP_THEME_STYLE
+    cover_bg_gradient = bundle.get("cover_bg_gradient")
 
     # Strip existing frontmatter if present to inject our styled one
     cleaned = re.sub(r"^---[\s\S]*?---\s*", "", content.strip())
@@ -483,7 +845,7 @@ def _ensure_marp_frontmatter(content: str, title: str) -> str:
         cleaned = cover_slide + cleaned
 
     header_title = f"{company_name} | {clean_t[:35]}"
-    style_indented = "\n".join("  " + line for line in MARP_THEME_STYLE.strip().splitlines())
+    style_indented = "\n".join("  " + line for line in css_theme.strip().splitlines())
 
     logo_path = _get_logo_path()
     if logo_path:
@@ -537,6 +899,9 @@ def _ensure_marp_frontmatter(content: str, title: str) -> str:
             f"Contact: {company.get('email', 'info@eaisystems.com')}\n"
         )
 
+    # 4. Context-aware real photograph resolution & split layout insertion
+    cleaned = process_marp_images(cleaned, clean_t, cover_bg_gradient=cover_bg_gradient)
+
     return frontmatter + cleaned
 
 
@@ -545,14 +910,31 @@ def compile_marp_to_pptx(
     title: str,
     task_number: int = 0,
     model_label: str = "",
+    bundle_id: int = None,
 ) -> str:
     """
     Compile Marp markdown into a PowerPoint (.pptx) file using Marp CLI.
+    Rotates through templates 1 to 7 via ppt_rota (or uses bundle_id if provided).
     Saves in PPT_OUTPUT_DIR and returns the absolute path.
     """
     os.makedirs(PPT_OUTPUT_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in title)[:45].strip() or "Presentation"
+
+    # ── Multi-Template Rota Selection ─────────────────────────────────────────
+    try:
+        from tools.ppt_rota import get_next_ppt_bundle, get_bundle_by_id
+        from core.config import get_ppt_rotation_config
+        rot_enabled, rota_count = get_ppt_rotation_config()
+        if bundle_id is not None:
+            bundle = get_bundle_by_id(bundle_id)
+        elif rot_enabled:
+            bundle = get_next_ppt_bundle(rota_count=rota_count)
+        else:
+            bundle = get_bundle_by_id(1)
+    except Exception as re_err:
+        print(f"[PPT Rota Warning] Could not resolve rota bundle ({re_err}) — using default template")
+        bundle = {}
 
     model_tag = str(model_label).upper() or "SALLY"
     t_tag = f"_T{task_number}" if task_number else ""
@@ -564,14 +946,26 @@ def compile_marp_to_pptx(
     md_path = os.path.join(PPT_OUTPUT_DIR, md_filename)
     pptx_path = os.path.join(PPT_OUTPUT_DIR, pptx_filename)
 
-    full_markdown = _ensure_marp_frontmatter(marp_markdown, title)
+    full_markdown = _ensure_marp_frontmatter(marp_markdown, title, bundle=bundle)
 
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(full_markdown)
 
-    print(f"[Marp] Compiling presentation: {os.path.basename(md_path)} -> .pptx")
+    template_name = bundle.get("name", "Executive Sapphire")
+    template_id = bundle.get("id", 1)
+    print(f"[Marp] Compiling presentation with Template #{template_id} ('{template_name}'): {os.path.basename(md_path)} -> .pptx")
 
-    cmd = ["npx.cmd", "-y", "@marp-team/marp-cli", "--no-stdin", "--html", "--allow-local-files", md_path, "-o", pptx_path, "--pptx"]
+
+    # Ensure Node.js is discoverable in PATH
+    node_dir = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "nodejs")
+    if os.path.isdir(node_dir) and node_dir.lower() not in os.environ.get("PATH", "").lower():
+        os.environ["PATH"] = node_dir + os.pathsep + os.environ.get("PATH", "")
+
+    npx_bin = shutil.which("npx.cmd") or shutil.which("npx") or os.path.join(node_dir, "npx.cmd")
+    if not os.path.isfile(npx_bin) and not shutil.which(npx_bin):
+        npx_bin = "npx.cmd"
+
+    cmd = [npx_bin, "-y", "@marp-team/marp-cli", "--no-stdin", "--html", "--allow-local-files", md_path, "-o", pptx_path, "--pptx"]
     res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
 
     if res.returncode != 0:

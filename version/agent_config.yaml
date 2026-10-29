@@ -20,6 +20,14 @@ company:
 # Include company logo on cover and slide headers. Set to false to disable.
 ppt_include_logo: true
 
+# Multi-Template Rotation (1 to 7):
+# Rotates through distinct executive design bundles on every presentation generated,
+# ensuring each presentation has a fresh, unique aesthetic (Theme + Master Layout).
+ppt_template_rotation:
+  enabled: true
+  rota_count: 10
+
+
 # ── Mailbox ──────────────────────────────────────────────────────
 # Which email account the agent monitors and replies from. Credentials for
 # each live in .env (OUTLOOK_CLIENT_ID/SECRET/TENANT_ID, or GMAIL_CLIENT_ID/
@@ -48,11 +56,11 @@ provider_models:
   #   claude options: claude-opus-4-8 | claude-opus-4-7 | claude-opus-4-6 | claude-sonnet-4-6 | claude-haiku-4-5-20251001
   openai: gpt-4o
   #   openai options: gpt-5.4 | gpt-5.4-pro | gpt-5.4-mini | gpt-5.4-nano | gpt-4o | gpt-4o-mini | o1-mini | o3-mini
-  local: qwen2.5:14b-instruct
+  local: qwen2.5:3b
   #   local runs against Ollama (http://127.0.0.1:11434 by default, override with
   #   OLLAMA_BASE_URL in .env). No API key needed, but the model must be pulled
   #   first: `ollama pull qwen2.5:14b-instruct` (or whichever tag you set here).
-  local_vision: llava
+  local_vision: qwen2.5:3b
   #   Vision needs its OWN model — the text model above isn't multimodal.
   #   Pull one first: `ollama pull llava` (or bakllava | llama3.2-vision |
   #   qwen2.5vl | moondream). Used only when vision_provider is set to "local".
@@ -63,7 +71,7 @@ provider_models:
 # preferred cloud provider fails, since a machine without Ollama running would
 # otherwise stall every asset-tagging call trying to reach it.
 #   options:  groq | gemini | claude | openai | local
-vision_provider: openai
+vision_provider: groq
 
 # Only these senders can trigger the agent. Full emails and/or whole
 # domains (prefix a domain with "@"). This list is the LIVE allowlist and
@@ -77,6 +85,7 @@ sender_allowlist:
   - mohammedamin.shaikh@eaisystems.com
   - siddhi.pal@eaisystems.com
   - mark.klagent@gmail.com
+  - siddhieai@gmail.com
 
 # Reply to ANY sender when sender_allowlist is empty. Default false (deny all).
 # Only takes effect when the allowlist is empty; ignored otherwise.
@@ -89,7 +98,7 @@ allow_all_senders: false
 # name to set. Must be pulled + Ollama running, and named explicitly here
 # (never auto-selected).
 #   options:  groq | gemini | claude | openai | local
-routing_model: openai
+routing_model: groq
 
 # The OTHER AI assistants that share this mailbox (not this agent itself).
 # Email addressed to one of these names is filed under a matching Gmail
