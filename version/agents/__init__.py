@@ -220,9 +220,16 @@ def invoke_with_tpm_retry(llm, messages, agent_name: str = "AGENT", max_tries: i
                 raise
             c = msgs[idx].content
             new_len = int(len(c) * 0.6)
-            msgs[idx] = type(msgs[idx])(
-                content=c[:new_len] + "\n[...trimmed to fit the model's per-minute token limit...]"
-            )
+            new_content = c[:new_len] + "\n[...trimmed to fit the model's per-minute token limit...]"
+            if hasattr(msgs[idx], "model_copy"):
+                msgs[idx] = msgs[idx].model_copy(update={"content": new_content})
+            elif isinstance(msgs[idx], ToolMessage):
+                msgs[idx] = ToolMessage(
+                    content=new_content,
+                    tool_call_id=getattr(msgs[idx], "tool_call_id", "call_default")
+                )
+            else:
+                msgs[idx] = type(msgs[idx])(content=new_content)
             print(f"[{agent_name}] TPM limit hit — trimmed context to {new_len} chars, "
                   f"retrying ({attempt + 1}/{max_tries - 1}).")
 
@@ -487,7 +494,8 @@ def run_tool_loop(
                 result = f"Unknown tool: {tc['name']}"
                 print(f"[{agent_name}] Unknown tool requested: {tc['name']}")
 
-            messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
+            tool_call_id = tc.get("id") or f"call_{iteration}_{tc.get('name', 'tool')}"
+            messages.append(ToolMessage(content=str(result), tool_call_id=tool_call_id))
 
     # If the iteration limit was reached or loop ended without a final answer text,
     # synthesize a clean final answer from all gathered findings.

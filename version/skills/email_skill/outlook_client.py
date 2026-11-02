@@ -574,9 +574,11 @@ def send_reply(msg, body: str, attachments: list[str] | None = None, cc: list[st
             print(f"[Email] Attached reply file: {path}")
         else:
             print(f"[Email] Reply attachment missing, skipping: {path}")
+    print(f"[Email] Dispatching reply to {getattr(msg, 'sender', 'sender')} with {len(attachments or [])} attachment(s)...")
     result = reply.send()
     if not result:
         raise RuntimeError(
             f"send_reply failed — O365 reply.send() returned False for message {msg.object_id}. "
             "Check Outlook permissions (Mail.Send scope required)."
         )
+    print(f"[Email] Reply successfully dispatched via Microsoft Graph API.")

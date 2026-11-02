@@ -63,10 +63,13 @@ intake/*
 !intake/.gitkeep
 *.log
 
-# Scratch / Runtime Uploads
+# Scratch / Runtime Uploads & Image Cache
 scratch/
+**/scratch/
 test_output/
 uploads/
+**/assets/images/cache/
+assets/images/cache/
 
 # OS & Editor Files
 .DS_Store
