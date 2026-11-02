@@ -905,6 +905,41 @@ def _ensure_marp_frontmatter(content: str, title: str, bundle: dict = None) -> s
     return frontmatter + cleaned
 
 
+def _optimize_pptx_archive(pptx_path: str) -> None:
+    """Optimize Marp-generated PPTX size by quantizing internal slide screenshots
+    so the final presentation stays under ~1-2 MB for instant single-request email dispatch.
+    """
+    try:
+        import zipfile, io
+        from PIL import Image
+
+        temp_pptx = pptx_path + ".opt.tmp"
+        with zipfile.ZipFile(pptx_path, "r") as zin, \
+             zipfile.ZipFile(temp_pptx, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename.startswith("ppt/media/") and item.filename.lower().endswith(".png") and len(data) > 200_000:
+                    try:
+                        im = Image.open(io.BytesIO(data))
+                        buf = io.BytesIO()
+                        im.quantize(colors=256, method=Image.Resampling.LANCZOS).save(buf, format="PNG", optimize=True)
+                        qdata = buf.getvalue()
+                        if len(qdata) < len(data):
+                            data = qdata
+                    except Exception:
+                        pass
+                zout.writestr(item, data)
+
+        if os.path.isfile(temp_pptx) and os.path.getsize(temp_pptx) > 0:
+            os.replace(temp_pptx, pptx_path)
+    except Exception as e:
+        print(f"[Marp Optimization Notice] Optional compression skipped: {e}")
+        if os.path.exists(pptx_path + ".opt.tmp"):
+            try:
+                os.remove(pptx_path + ".opt.tmp")
+            except Exception:
+                pass
+
 def compile_marp_to_pptx(
     marp_markdown: str,
     title: str,
@@ -965,7 +1000,16 @@ def compile_marp_to_pptx(
     if not os.path.isfile(npx_bin) and not shutil.which(npx_bin):
         npx_bin = "npx.cmd"
 
-    cmd = [npx_bin, "-y", "@marp-team/marp-cli", "--no-stdin", "--html", "--allow-local-files", md_path, "-o", pptx_path, "--pptx"]
+    cmd = [
+        npx_bin, "-y", "@marp-team/marp-cli",
+        "--no-stdin",
+        "--html",
+        "--allow-local-files",
+        "--image-scale", "1",
+        md_path,
+        "-o", pptx_path,
+        "--pptx",
+    ]
     res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
 
     if res.returncode != 0:
@@ -975,6 +1019,9 @@ def compile_marp_to_pptx(
 
     if not os.path.isfile(pptx_path) or os.path.getsize(pptx_path) == 0:
         raise RuntimeError(f"Marp did not generate a valid .pptx file at {pptx_path}")
+
+    # Optimize PPTX bundle size so it stays under 2 MB for instant email dispatch
+    _optimize_pptx_archive(pptx_path)
 
     print(f"[Marp] Successfully created presentation -> {pptx_path} ({os.path.getsize(pptx_path)} bytes)")
     return pptx_path
