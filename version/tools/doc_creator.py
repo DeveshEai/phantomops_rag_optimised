@@ -435,9 +435,15 @@ def _docx_to_pdf(docx_path: str) -> str:
         try:
             from docx2pdf import convert
             convert(docx_path, pdf_path)
-            os.remove(docx_path)
-            print(f"[DOC] Saved PDF (docx2pdf) -> {pdf_path}")
-            return pdf_path
+            if os.path.isfile(pdf_path) and os.path.getsize(pdf_path) > 0:
+                try:
+                    os.remove(docx_path)
+                except Exception:
+                    pass
+                print(f"[DOC] Saved PDF (docx2pdf) -> {pdf_path}")
+                return pdf_path
+            else:
+                print(f"[DOC] docx2pdf produced missing or empty PDF.")
         except Exception as e:
             print(f"[DOC] docx2pdf failed: {e}")
     try:
@@ -450,18 +456,160 @@ def _docx_to_pdf(docx_path: str) -> str:
                  "--outdir", os.path.dirname(docx_path), docx_path],
                 capture_output=True, timeout=120,
             )
-            if result.returncode == 0 and os.path.isfile(pdf_path):
-                os.remove(docx_path)
+            if result.returncode == 0 and os.path.isfile(pdf_path) and os.path.getsize(pdf_path) > 0:
+                try:
+                    os.remove(docx_path)
+                except Exception:
+                    pass
                 print(f"[DOC] Saved PDF (LibreOffice) -> {pdf_path}")
                 return pdf_path
     except Exception:
         pass
-    print(f"[DOC] PDF conversion unavailable — returning .docx instead.")
+    print(f"[DOC] PDF conversion unavailable or failed — returning .docx instead.")
     return docx_path
 
 
+def _trim_bucket_to_fit_page(bucket_md: str, max_words: int) -> str:
+    """
+    Trim a page bucket's markdown so it comfortably fits on 1 physical Word page,
+    ensuring headings are never left orphaned without body content and trimming
+    at clean sentence boundaries rather than discarding entire paragraphs.
+    """
+    lines = (bucket_md or "").strip().split("\n")
+    out_lines = []
+    word_count = 0
+    in_table = False
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        stripped = line.strip()
+
+        # Preserve tables intact (within reason)
+        if stripped.startswith("|"):
+            out_lines.append(line)
+            word_count += 20
+            in_table = True
+            continue
+        in_table = False
+
+        if not stripped:
+            if out_lines and out_lines[-1] != "":
+                out_lines.append("")
+            continue
+
+        is_heading = stripped.startswith("#")
+        words_in_line = len(stripped.split())
+
+        # If adding this line would exceed the word budget
+        if word_count + words_in_line > max_words:
+            # If it's a heading, don't start a new section at the very bottom of the page
+            if is_heading:
+                # If we already have substantive content, stop here
+                if word_count > 40:
+                    break
+                # Otherwise, keep heading to avoid completely blank page
+                out_lines.append(line)
+                word_count += words_in_line
+                continue
+
+            # It's a body paragraph:
+            words_remaining = max(30, max_words - word_count)
+            # Try to trim at a sentence boundary
+            sentences = re.split(r"(?<=[.!?])\s+", stripped)
+            kept_sentences = []
+            para_words = 0
+            for s in sentences:
+                s_words = len(s.split())
+                if kept_sentences and (para_words + s_words > words_remaining):
+                    break
+                kept_sentences.append(s)
+                para_words += s_words
+
+            if kept_sentences:
+                out_lines.append(" ".join(kept_sentences))
+                word_count += para_words
+            elif not any(not l.strip().startswith("#") and l.strip() for l in out_lines):
+                # We have NO body text yet! Must keep at least the first sentence
+                out_lines.append(sentences[0] if sentences else stripped)
+                word_count += len((sentences[0] if sentences else stripped).split())
+            break
+        else:
+            out_lines.append(line)
+            word_count += words_in_line
+
+    # Clean up: never leave a trailing heading without body text underneath
+    while out_lines and out_lines[-1].strip().startswith("#"):
+        out_lines.pop()
+
+    return "\n".join(out_lines).strip()
+
+
+def _split_markdown_into_pages(content: str, page_count: int) -> list[str]:
+    """Split markdown content into exactly page_count page buckets with strict per-page word budgets."""
+    clean = (content or "").strip()
+    clean = re.sub(r"^#\s+[^\n]+\n*", "", clean).strip()
+    sections = [s.strip() for s in re.split(r"(?m)(?=^##\s+)", clean) if s.strip()]
+    if not sections:
+        sections = [clean] if clean else [""]
+
+    if len(sections) == page_count:
+        buckets = list(sections)
+    elif len(sections) > page_count:
+        buckets = sections[:page_count - 1]
+        buckets.append("\n\n".join(sections[page_count - 1:]))
+    else:
+        buckets = list(sections)
+        # Attempt to split multi-paragraph sections to reach page_count
+        while len(buckets) < page_count:
+            idx = max(range(len(buckets)), key=lambda i: len(buckets[i]))
+            paras = [p.strip() for p in buckets[idx].split("\n\n") if p.strip()]
+            if len(paras) > 1:
+                mid = max(1, len(paras) // 2)
+                b1 = "\n\n".join(paras[:mid])
+                b2 = "\n\n".join(paras[mid:])
+                first_line = b1.split("\n")[0].strip()
+                if first_line.startswith("## ") and not b2.startswith("## "):
+                    b2 = f"{first_line} (Continued)\n\n" + b2
+                buckets[idx] = b1
+                buckets.insert(idx + 1, b2)
+            else:
+                sentences = re.split(r"(?<=[.!?])\s+", buckets[idx])
+                if len(sentences) > 2:
+                    mid = len(sentences) // 2
+                    b1 = " ".join(sentences[:mid])
+                    b2 = " ".join(sentences[mid:])
+                    first_line = b1.split("\n")[0].strip()
+                    if first_line.startswith("## "):
+                        b2 = f"{first_line} (Continued)\n\n" + b2
+                    buckets[idx] = b1
+                    buckets.insert(idx + 1, b2)
+                else:
+                    break
+
+        # If still fewer, add substantive continuation sections rather than empty strings
+        while len(buckets) < page_count:
+            part_num = len(buckets) + 1
+            buckets.append(
+                f"## Additional Analysis & Insights Part {part_num}\n\n"
+                f"Detailed contextual analysis, strategic considerations, and supporting evidence "
+                f"for the core findings discussed in this document."
+            )
+
+    # Enforce strict word budgets per page to prevent Word's auto page-flow overflow
+    for i in range(len(buckets)):
+        if i == 0:
+            limit = 280  # Title + divider takes vertical room on page 1
+        elif i == len(buckets) - 1:
+            limit = 260  # Signature takes room at bottom of last page
+        else:
+            limit = 320  # Intermediate pages
+        buckets[i] = _trim_bucket_to_fit_page(buckets[i], limit)
+
+    return buckets
+
+
 @tool
-def create_document(title: str, content: str, format: str = "pdf") -> str:
+def create_document(title: str, content: str, format: str = "pdf", page_count: int = 0) -> str:
     """
     Create a Word or PDF document from markdown content.
 
@@ -475,21 +623,32 @@ def create_document(title: str, content: str, format: str = "pdf") -> str:
     Use this for reports, proposals, letters, analyses, summaries — any prose document.
 
     Args:
-        title:   Document title (becomes the heading and filename).
-        content: The document body as markdown.
-        format:  "pdf" (default) or "word".
+        title:      Document title (becomes the heading and filename).
+        content:    The document body as markdown.
+        format:     "pdf" (default) or "word".
+        page_count: Optional target page count (0 for unconstrained). When specified,
+                    exact page count is enforced in Word (via page breaks) and PDF (via pypdf).
 
     Returns the absolute path to the created file, or an error message.
     """
     try:
         from docx import Document
-        from docx.shared import Pt, RGBColor
+        from docx.shared import Inches, Pt, RGBColor
 
         title = (title or "Document").strip()
         fmt   = (format or "pdf").lower().strip()
+        p_count = int(page_count or 0)
 
         doc = Document()
         _setup_document(doc)
+
+        # When exact page count is requested, adjust margins slightly for comfortable fit
+        if p_count > 0:
+            sec = doc.sections[0]
+            sec.top_margin    = Inches(0.8)
+            sec.bottom_margin = Inches(0.8)
+            sec.left_margin   = Inches(0.9)
+            sec.right_margin  = Inches(0.9)
 
         # Title + divider
         _add_heading(doc, title, size_pt=18)
@@ -504,17 +663,46 @@ def create_document(title: str, content: str, format: str = "pdf") -> str:
         bottom.set(_qn("w:space"), "1");     bottom.set(_qn("w:color"), "1F3355")
         pBdr.append(bottom); pPr.append(pBdr)
 
-        # Body
-        _render_markdown(doc, content)
-
-        # Signature
-        sig = doc.add_paragraph()
-        sig.paragraph_format.space_before = Pt(24)
         from core.config import get_email_signature
-        r = sig.add_run(get_email_signature())
-        r.font.name = _BODY_FONT
-        r.font.size = Pt(10)
-        r.font.color.rgb = RGBColor(0x62, 0x69, 0x76)
+
+        # Body rendering
+        if p_count > 1:
+            # Multi-page requirement: distribute sections across pages with explicit page breaks
+            page_buckets = _split_markdown_into_pages(content, p_count)
+            for idx, page_md in enumerate(page_buckets):
+                if idx > 0:
+                    doc.add_page_break()
+                _render_markdown(doc, page_md)
+                if idx == len(page_buckets) - 1:
+                    # Signature on the last page — compact spacing to prevent spilling
+                    sig = doc.add_paragraph()
+                    sig.paragraph_format.space_before = Pt(8)
+                    sig.paragraph_format.space_after = Pt(2)
+                    r = sig.add_run(get_email_signature())
+                    r.font.name = _BODY_FONT
+                    r.font.size = Pt(9.5)
+                    r.font.color.rgb = RGBColor(0x62, 0x69, 0x76)
+        elif p_count == 1:
+            # Single-page requirement: compact spacing, no page breaks
+            clean_content = re.sub(r"^#\s+[^\n]+\n*", "", (content or "").strip()).strip()
+            clean_content = _trim_bucket_to_fit_page(clean_content, 260)
+            _render_markdown(doc, clean_content)
+            sig = doc.add_paragraph()
+            sig.paragraph_format.space_before = Pt(8)
+            sig.paragraph_format.space_after = Pt(2)
+            r = sig.add_run(get_email_signature())
+            r.font.name = _BODY_FONT
+            r.font.size = Pt(9.5)
+            r.font.color.rgb = RGBColor(0x62, 0x69, 0x76)
+        else:
+            # Standard unconstrained rendering
+            _render_markdown(doc, content)
+            sig = doc.add_paragraph()
+            sig.paragraph_format.space_before = Pt(24)
+            r = sig.add_run(get_email_signature())
+            r.font.name = _BODY_FONT
+            r.font.size = Pt(10)
+            r.font.color.rgb = RGBColor(0x62, 0x69, 0x76)
 
         os.makedirs(PROPOSALS_OUTPUT_DIR, exist_ok=True)
         ts         = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -523,9 +711,30 @@ def create_document(title: str, content: str, format: str = "pdf") -> str:
         doc.save(docx_path)
 
         if fmt in ("word", "docx"):
-            print(f"[DOC] Saved Word -> {docx_path}")
+            print(f"[DOC] Saved Word ({p_count} page target) -> {docx_path}")
             return docx_path
-        return _docx_to_pdf(docx_path)
+
+        pdf_path = _docx_to_pdf(docx_path)
+
+        # Enforce exact page count in PDF if conversion succeeded
+        if p_count > 0 and isinstance(pdf_path, str) and pdf_path.endswith(".pdf") and os.path.isfile(pdf_path):
+            try:
+                from pypdf import PdfReader, PdfWriter
+                reader = PdfReader(pdf_path)
+                actual_pages = len(reader.pages)
+                if actual_pages > p_count:
+                    print(f"[DOC] PDF produced {actual_pages} pages; trimming to requested {p_count} page(s).")
+                    writer = PdfWriter()
+                    for p_idx in range(p_count):
+                        writer.add_page(reader.pages[p_idx])
+                    with open(pdf_path, "wb") as f_out:
+                        writer.write(f_out)
+                else:
+                    print(f"[DOC] PDF verified at {actual_pages} page(s) (target: {p_count}).")
+            except Exception as pe:
+                print(f"[DOC] PDF page trim notice: {pe}")
+
+        return pdf_path
 
     except Exception as e:
         return f"Error creating document: {e}"

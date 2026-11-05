@@ -91,8 +91,9 @@ def create_excel_report(
                     c.border    = border
 
             # Data rows with alternating shading
+            from core.content_types import sanitize_excel_value
             for r_idx, row in enumerate(rows, start=2):
-                ws.append([("" if v is None else str(v)) for v in row])
+                ws.append([sanitize_excel_value(v) for v in row])
                 for col_idx in range(1, len(row) + 1):
                     c = ws.cell(row=r_idx, column=col_idx)
                     c.font   = body_font

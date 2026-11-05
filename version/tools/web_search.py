@@ -27,11 +27,31 @@ _MAX_TOTAL_CHARS  = 3500   # per single search call (all results combined)
 
 
 from typing import Any
+import threading
 
-# Global cache of URLs from the most recent search call, so open(id=0) resolves
-# correctly when models pass integer result indices instead of full URL strings.
+# Thread-local context for search URLs and page texts to isolate concurrent subtasks
+_search_context = threading.local()
+
+def _get_search_urls() -> list[str]:
+    if not hasattr(_search_context, "urls"):
+        _search_context.urls = []
+    return _search_context.urls
+
+def _set_search_urls(urls: list[str]):
+    _search_context.urls = list(urls)
+    global _LAST_SEARCH_URLS
+    _LAST_SEARCH_URLS = list(urls)
+
+def _get_page_text() -> str:
+    return getattr(_search_context, "page_text", _LAST_PAGE_TEXT)
+
+def _set_page_text(text: str):
+    _search_context.page_text = text
+    global _LAST_PAGE_TEXT
+    _LAST_PAGE_TEXT = text
+
+# Backward-compatibility global references
 _LAST_SEARCH_URLS: list[str] = []
-# Global cache of the last opened webpage body for in-page search (find tool).
 _LAST_PAGE_TEXT: str = ""
 
 
@@ -58,16 +78,17 @@ def serpapi_search(query: str, time_range: str = "") -> str:
         organic = results.get("organic_results", [])
         if not organic:
             return "No results found."
-        _LAST_SEARCH_URLS.clear()
+        urls = []
         blocks = []
         for r in organic[:5]:
             link = r.get("link", "")
             if link:
-                _LAST_SEARCH_URLS.append(link)
+                urls.append(link)
             blocks.append(
                 f"Title: {r.get('title')}\nURL: {link}\n"
                 f"Date: {r.get('date', 'n/a')}\nSnippet: {_cap(r.get('snippet', ''), _MAX_RESULT_CHARS)}"
             )
+        _set_search_urls(urls)
         return _cap("\n\n".join(blocks), _MAX_TOTAL_CHARS)
     except Exception as e:
         return f"SerpAPI search failed: {e}"
@@ -92,16 +113,17 @@ def tavily_search(query: str, time_range: str = "") -> str:
         results = response.get("results", [])
         if not results:
             return "No results found."
-        _LAST_SEARCH_URLS.clear()
+        urls = []
         blocks = []
         for r in results:
             link = r.get("url", "")
             if link:
-                _LAST_SEARCH_URLS.append(link)
+                urls.append(link)
             blocks.append(
                 f"Title: {r.get('title')}\nURL: {link}\n"
                 f"Published: {r.get('published_date', 'n/a')}\nContent: {_cap(r.get('content', ''), _MAX_RESULT_CHARS)}"
             )
+        _set_search_urls(urls)
         return _cap("\n\n".join(blocks), _MAX_TOTAL_CHARS)
     except Exception as e:
         return f"Tavily search failed: {e}"
@@ -121,18 +143,19 @@ def open_url(id: Any = None, url: str = "", cursor: int = 0) -> str:
     Accepts id (URL string or result index number like 0, 1) and optional cursor.
     """
     target = ""
+    search_urls = _get_search_urls()
     # Case 1: id is an integer (e.g. id=0 means first search result)
     if isinstance(id, int):
-        if 0 <= id < len(_LAST_SEARCH_URLS):
-            target = _LAST_SEARCH_URLS[id]
-        elif _LAST_SEARCH_URLS:
-            target = _LAST_SEARCH_URLS[0]
+        if 0 <= id < len(search_urls):
+            target = search_urls[id]
+        elif search_urls:
+            target = search_urls[0]
     elif isinstance(id, str):
         s_id = id.strip()
         if s_id.isdigit():
             idx = int(s_id)
-            if 0 <= idx < len(_LAST_SEARCH_URLS):
-                target = _LAST_SEARCH_URLS[idx]
+            if 0 <= idx < len(search_urls):
+                target = search_urls[idx]
         elif s_id.startswith("http://") or s_id.startswith("https://"):
             target = s_id
 
@@ -140,8 +163,8 @@ def open_url(id: Any = None, url: str = "", cursor: int = 0) -> str:
         target = str(url).strip()
 
     if not target:
-        if _LAST_SEARCH_URLS:
-            target = _LAST_SEARCH_URLS[0]
+        if search_urls:
+            target = search_urls[0]
         else:
             return "No URL or search result found to open."
 
@@ -159,8 +182,7 @@ def open_url(id: Any = None, url: str = "", cursor: int = 0) -> str:
         if resp.status_code != 200:
             return f"Webpage returned status {resp.status_code} for {target}"
         text = _html_to_text(resp.text)
-        global _LAST_PAGE_TEXT
-        _LAST_PAGE_TEXT = text
+        _set_page_text(text)
         start_char = max(0, int(cursor)) if cursor else 0
         if start_char < len(text):
             text = text[start_char:]
@@ -192,23 +214,23 @@ def find_in_page(pattern: Any = "", cursor: int = 0) -> str:
     """Find text matching pattern within the currently opened webpage (Ctrl+F).
     Accepts pattern (search term) and optional cursor.
     """
-    global _LAST_PAGE_TEXT
-    if not _LAST_PAGE_TEXT:
+    page_text = _get_page_text()
+    if not page_text:
         return "No open webpage available to search."
     p = str(pattern or "").strip().lower()
     if not p:
-        return _cap(_LAST_PAGE_TEXT, _MAX_RESULT_CHARS * 3)
+        return _cap(page_text, _MAX_RESULT_CHARS * 3)
 
     matches = []
-    text_lower = _LAST_PAGE_TEXT.lower()
+    text_lower = page_text.lower()
     start_pos = max(0, int(cursor)) if cursor else 0
     while True:
         idx = text_lower.find(p, start_pos)
         if idx == -1 or len(matches) >= 5:
             break
         s_start = max(0, idx - 80)
-        s_end = min(len(_LAST_PAGE_TEXT), idx + len(p) + 120)
-        snippet = _LAST_PAGE_TEXT[s_start:s_end].strip()
+        s_end = min(len(page_text), idx + len(p) + 120)
+        snippet = page_text[s_start:s_end].strip()
         matches.append(f"... {snippet} ...")
         start_pos = idx + len(p) + 10
 

@@ -19,6 +19,7 @@ import json
 import time
 import uuid
 import sqlite3
+from datetime import datetime
 from core.config import DATABASE_DIR, DB_FILENAME
 
 
@@ -172,6 +173,60 @@ def init_db():
                 ingested_at  TEXT DEFAULT (DATETIME('now')),
                 UNIQUE (source_type, source_ref, content_hash)
             );
+
+            CREATE TABLE IF NOT EXISTS subtasks (
+                id               TEXT PRIMARY KEY,
+                plan_id          TEXT NOT NULL,
+                parent_task_id   TEXT NOT NULL,
+                subtask_key      TEXT NOT NULL,
+                agent_name       TEXT NOT NULL,
+                input_data       TEXT,
+                dependencies     TEXT,
+                status           TEXT NOT NULL DEFAULT 'PENDING'
+                                 CHECK(status IN ('PENDING','READY','RUNNING','SUCCEEDED','FAILED','RETRY_WAIT','CANCELLED','BLOCKED')),
+                attempt_count    INTEGER DEFAULT 0,
+                max_retries      INTEGER DEFAULT 2,
+                result_data      TEXT,
+                error_message    TEXT,
+                idempotency_key  TEXT UNIQUE,
+                started_at       TEXT,
+                completed_at     TEXT,
+                created_at       TEXT DEFAULT (DATETIME('now')),
+                updated_at       TEXT DEFAULT (DATETIME('now')),
+                FOREIGN KEY (parent_task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_subtasks_parent ON subtasks (parent_task_id, plan_id);
+            CREATE INDEX IF NOT EXISTS idx_subtasks_status ON subtasks (status);
+
+            CREATE TABLE IF NOT EXISTS subtask_events (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                subtask_id   TEXT NOT NULL,
+                event_type   TEXT NOT NULL,
+                message      TEXT,
+                created_at   TEXT DEFAULT (DATETIME('now')),
+                FOREIGN KEY (subtask_id) REFERENCES subtasks(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS artifacts (
+                id                 TEXT PRIMARY KEY,
+                parent_task_id     TEXT NOT NULL,
+                subtask_id         TEXT,
+                artifact_type      TEXT NOT NULL,
+                file_path          TEXT NOT NULL,
+                file_name          TEXT NOT NULL,
+                size_bytes         INTEGER NOT NULL,
+                checksum_sha256    TEXT NOT NULL,
+                generation_status  TEXT DEFAULT 'generated'
+                                   CHECK(generation_status IN ('generated','validated','failed')),
+                validation_status  TEXT DEFAULT 'passed'
+                                   CHECK(validation_status IN ('passed','failed','unverified')),
+                delivery_status    TEXT DEFAULT 'pending'
+                                   CHECK(delivery_status IN ('pending','delivered','failed')),
+                created_at         TEXT DEFAULT (DATETIME('now')),
+                updated_at         TEXT DEFAULT (DATETIME('now')),
+                FOREIGN KEY (parent_task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts (parent_task_id);
         """)
         conn.commit()
         _run_migrations(conn)
@@ -998,3 +1053,259 @@ def ping() -> bool:
         return False
     finally:
         conn.close()
+
+
+# ── Subtasks & Plan Execution ──────────────────────────────────────────────────
+
+def save_subtask(subtask_data: dict) -> str:
+    """Insert or update a subtask record."""
+    conn = _get_connection()
+    try:
+        subtask_id = subtask_data.get("id") or str(uuid.uuid4())
+        plan_id = subtask_data.get("plan_id", "")
+        parent_task_id = subtask_data.get("parent_task_id", "")
+        subtask_key = subtask_data.get("subtask_key", "")
+        agent_name = subtask_data.get("agent_name", "")
+        input_data = json.dumps(subtask_data.get("input_data") or {})
+        dependencies = json.dumps(subtask_data.get("dependencies") or [])
+        status = subtask_data.get("status", "PENDING")
+        attempt_count = int(subtask_data.get("attempt_count") or 0)
+        max_retries = int(subtask_data.get("max_retries") or 2)
+        result_data = json.dumps(subtask_data.get("result_data")) if subtask_data.get("result_data") is not None else None
+        error_message = subtask_data.get("error_message")
+        idempotency_key = subtask_data.get("idempotency_key")
+        started_at = subtask_data.get("started_at")
+        completed_at = subtask_data.get("completed_at")
+
+        # Auto-ensure parent task exists in tasks table to satisfy foreign key constraint
+        if parent_task_id:
+            parent_exists = conn.execute("SELECT 1 FROM tasks WHERE id=?", (parent_task_id,)).fetchone()
+            if not parent_exists:
+                conn.execute(
+                    "INSERT OR IGNORE INTO sessions (id, thread_id, sender) VALUES (?, ?, 'system')",
+                    (parent_task_id, parent_task_id)
+                )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO tasks (
+                        id, task_number, thread_id, session_id, task_label, deliverable_type, created_by
+                    ) VALUES (?, 1, ?, ?, ?, 'general', 'system')
+                    """,
+                    (parent_task_id, parent_task_id, parent_task_id, f"Task {parent_task_id[:12]}")
+                )
+
+        conn.execute(
+            """
+            INSERT INTO subtasks (
+                id, plan_id, parent_task_id, subtask_key, agent_name,
+                input_data, dependencies, status, attempt_count, max_retries,
+                result_data, error_message, idempotency_key, started_at, completed_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATETIME('now'))
+            ON CONFLICT(id) DO UPDATE SET
+                status=excluded.status,
+                attempt_count=excluded.attempt_count,
+                result_data=excluded.result_data,
+                error_message=excluded.error_message,
+                started_at=COALESCE(excluded.started_at, subtasks.started_at),
+                completed_at=COALESCE(excluded.completed_at, subtasks.completed_at),
+                updated_at=DATETIME('now')
+            """,
+            (
+                subtask_id, plan_id, parent_task_id, subtask_key, agent_name,
+                input_data, dependencies, status, attempt_count, max_retries,
+                result_data, error_message, idempotency_key, started_at, completed_at
+            )
+        )
+        conn.commit()
+        return subtask_id
+    except Exception as e:
+        conn.rollback()
+        print(f"[SQLite] save_subtask failed: {e}")
+        raise
+    finally:
+        conn.close()
+
+
+def update_subtask_status(subtask_id: str, status: str, result_data: dict = None,
+                          error_message: str = None, attempt_count: int = None):
+    """Update execution status and output for a subtask."""
+    conn = _get_connection()
+    try:
+        now_str = datetime.utcnow().isoformat() if hasattr(datetime, "utcnow") else time.strftime("%Y-%m-%d %H:%M:%S")
+        res_json = json.dumps(result_data) if result_data is not None else None
+        
+        extra_sets = []
+        params = [status]
+        
+        if res_json is not None:
+            extra_sets.append("result_data=?")
+            params.append(res_json)
+        if error_message is not None:
+            extra_sets.append("error_message=?")
+            params.append(error_message)
+        if attempt_count is not None:
+            extra_sets.append("attempt_count=?")
+            params.append(attempt_count)
+            
+        if status == "RUNNING":
+            extra_sets.append("started_at=COALESCE(started_at, DATETIME('now'))")
+        elif status in ("SUCCEEDED", "FAILED", "CANCELLED"):
+            extra_sets.append("completed_at=DATETIME('now')")
+
+        set_clause = ", ".join(["status=?"] + extra_sets + ["updated_at=DATETIME('now')"])
+        params.append(subtask_id)
+
+        conn.execute(f"UPDATE subtasks SET {set_clause} WHERE id=?", tuple(params))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[SQLite] update_subtask_status failed: {e}")
+    finally:
+        conn.close()
+
+
+def get_subtasks_for_task(parent_task_id: str) -> list:
+    """Retrieve all subtasks associated with a parent task."""
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM subtasks WHERE parent_task_id=? ORDER BY created_at ASC",
+            (parent_task_id,)
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("input_data"):
+                try:
+                    d["input_data"] = json.loads(d["input_data"])
+                except Exception:
+                    pass
+            if d.get("dependencies"):
+                try:
+                    d["dependencies"] = json.loads(d["dependencies"])
+                except Exception:
+                    pass
+            if d.get("result_data"):
+                try:
+                    d["result_data"] = json.loads(d["result_data"])
+                except Exception:
+                    pass
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+def log_subtask_event(subtask_id: str, event_type: str, message: str = None):
+    try:
+        conn = _get_connection()
+    except Exception as e:
+        print(f"[SQLite] log_subtask_event connection failed: {e}")
+        return
+    try:
+        conn.execute(
+            "INSERT INTO subtask_events (subtask_id, event_type, message) VALUES (?, ?, ?)",
+            (subtask_id, event_type, message)
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"[SQLite] log_subtask_event failed: {e}")
+    finally:
+        conn.close()
+
+
+# ── Artifact Lifecycle Persistence ─────────────────────────────────────────────
+
+def record_artifact(parent_task_id: str, file_path: str, artifact_type: str,
+                    subtask_id: str = None, validation_status: str = "passed") -> dict:
+    """Record a generated artifact with size and SHA256 integrity hash."""
+    import hashlib
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"Cannot record non-existent artifact: {file_path}")
+
+    file_size = os.path.getsize(file_path)
+    sha256 = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        while chunk := f.read(65536):
+            sha256.update(chunk)
+    checksum = sha256.hexdigest()
+
+    artifact_id = str(uuid.uuid4())
+    file_name = os.path.basename(file_path)
+
+    conn = _get_connection()
+    try:
+        if parent_task_id:
+            parent_exists = conn.execute("SELECT 1 FROM tasks WHERE id=?", (parent_task_id,)).fetchone()
+            if not parent_exists:
+                conn.execute(
+                    "INSERT OR IGNORE INTO sessions (id, thread_id, sender) VALUES (?, ?, 'system')",
+                    (parent_task_id, parent_task_id)
+                )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO tasks (
+                        id, task_number, thread_id, session_id, task_label, deliverable_type, created_by
+                    ) VALUES (?, 1, ?, ?, ?, 'general', 'system')
+                    """,
+                    (parent_task_id, parent_task_id, parent_task_id, f"Task {parent_task_id[:12]}")
+                )
+
+        conn.execute(
+            """
+            INSERT INTO artifacts (
+                id, parent_task_id, subtask_id, artifact_type, file_path,
+                file_name, size_bytes, checksum_sha256, generation_status,
+                validation_status, delivery_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'generated', ?, 'pending')
+            """,
+            (
+                artifact_id, parent_task_id, subtask_id, artifact_type,
+                file_path, file_name, file_size, checksum, validation_status
+            )
+        )
+        conn.commit()
+        return {
+            "id": artifact_id,
+            "parent_task_id": parent_task_id,
+            "subtask_id": subtask_id,
+            "artifact_type": artifact_type,
+            "file_path": file_path,
+            "file_name": file_name,
+            "size_bytes": file_size,
+            "checksum_sha256": checksum,
+            "validation_status": validation_status,
+            "delivery_status": "pending",
+        }
+    except Exception as e:
+        conn.rollback()
+        print(f"[SQLite] record_artifact failed: {e}")
+        raise
+    finally:
+        conn.close()
+
+
+def get_artifacts_for_task(parent_task_id: str) -> list:
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM artifacts WHERE parent_task_id=? ORDER BY created_at ASC",
+            (parent_task_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def mark_artifact_delivered(artifact_id_or_path: str):
+    conn = _get_connection()
+    try:
+        conn.execute(
+            "UPDATE artifacts SET delivery_status='delivered', updated_at=DATETIME('now') "
+            "WHERE id=? OR file_path=?",
+            (artifact_id_or_path, artifact_id_or_path)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+

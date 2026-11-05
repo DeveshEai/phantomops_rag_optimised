@@ -197,13 +197,11 @@ def _download_pexels_image(photo: dict, query: str) -> Optional[Dict[str, Any]]:
         return None
 
     src = photo.get("src", {})
-    # Select best resolution: prefer large (1080p web-ready) or medium
-    # Avoid large2x (4K/Retina) which causes huge multi-megabyte presentations and stalls email uploads
+    # Select best resolution: prefer large2x (high-res), large, landscape, or original
     img_url = (
-        src.get("large")
-        or src.get("medium")
+        src.get("large2x")
+        or src.get("large")
         or src.get("landscape")
-        or src.get("large2x")
         or src.get("original")
     )
     if not img_url:
@@ -262,18 +260,6 @@ def _download_pexels_image(photo: dict, query: str) -> Optional[Dict[str, Any]]:
         if os.path.exists(local_path):
             os.remove(local_path)
         os.rename(temp_path, local_path)
-
-        # Optimize image with Pillow to keep presentation file sizes under 2MB
-        try:
-            from PIL import Image
-            with Image.open(local_path) as im:
-                if im.mode in ("RGBA", "P"):
-                    im = im.convert("RGB")
-                if im.width > 1600 or im.height > 1200:
-                    im.thumbnail((1600, 1200), Image.Resampling.LANCZOS)
-                im.save(local_path, "JPEG", quality=82, optimize=True)
-        except Exception:
-            pass
 
         meta = {
             "local_path": norm_local_path,

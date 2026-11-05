@@ -34,6 +34,10 @@ from skills.email_skill.outlook_client import get_outlook_service, get_message_b
 
 _AGENT_LABELS = {
     "supervisor":        ("🧠", "Supervisor"),
+    "orchestrator":      ("🌐", "Central Orchestrator"),
+    "business_agent":    ("💼", "Sales & Business Agent"),
+    "arabic_agent":      ("🌍", "Arabic Language Agent"),
+    "scheduling_agent":  ("📅", "Meeting Scheduling Agent"),
     "document_analyst":  ("📄", "Document Analyst"),
     "research_agent":    ("🔍", "Research & Intelligence"),
     "proposal_architect":("📝", "Proposal Architect"),
@@ -238,6 +242,31 @@ def _render_agent_trace(draft: dict):
                             st.text(ex["agent_output"][:300])
             except Exception:
                 pass  # agent_executions table may not exist yet
+
+        # Show Multi-Agent DAG Subtask Progress
+        task_id = draft.get("task_id") or draft.get("session_id")
+        if task_id:
+            try:
+                from core.database.sqlite_db import get_subtasks_for_task, get_artifacts_for_task
+                subtasks = get_subtasks_for_task(task_id)
+                if subtasks:
+                    st.divider()
+                    st.caption("Multi-Agent DAG Subtasks:")
+                    for st_item in subtasks:
+                        st_status = st_item.get("status", "PENDING")
+                        s_icon = "✅" if st_status == "SUCCEEDED" else ("⏳" if st_status in ("RUNNING", "READY") else ("🚫" if st_status == "BLOCKED" else "❌"))
+                        st.markdown(f"- {s_icon} **{st_item.get('subtask_key')}** (`{st_item.get('agent_name')}`): `{st_status}`")
+                        if st_item.get("error_message"):
+                            st.caption(f"  Error: {st_item['error_message']}")
+
+                artifacts = get_artifacts_for_task(task_id)
+                if artifacts:
+                    st.caption("Validated Artifacts:")
+                    for art in artifacts:
+                        v_icon = "🛡️ Validated" if art.get("validation_status") == "passed" else "⚠️ Unverified"
+                        st.markdown(f"- 📎 **{art.get('file_name')}** ({round(art.get('size_bytes', 0)/1024, 1)} KB) — `{v_icon}`")
+            except Exception:
+                pass
 
 
 # ── Draft renderer ────────────────────────────────────────────────────────────

@@ -216,6 +216,36 @@ def _extract_slide_count(body_lower: str) -> int:
     return n if 1 <= n <= 40 else 0
 
 
+_PAGE_COUNT_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+    "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20, "twenty-five": 25, "thirty": 30, "forty": 40, "fifty": 50,
+}
+_PAGE_COUNT_RE = re.compile(
+    r"\b(\d{1,2})\s*[-\s]?\s*pages?\b|"
+    r"\bpages?\s*[:\-]?\s*(\d{1,2})\b|"
+    rf"\b({'|'.join(_PAGE_COUNT_WORDS)})\s*[-\s]?\s*pages?\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_page_count(body_lower: str) -> int:
+    """Explicit page-count request ('5 page word', '2 page word', '3 page pdf',
+    'two-page doc', 'make it 4 pages') — 0 if none was mentioned, meaning fall
+    back to the standard document length. Extracted from the ORIGINAL request text."""
+    m = _PAGE_COUNT_RE.search(body_lower)
+    if not m:
+        return 0
+    digits = m.group(1) or m.group(2)
+    if digits:
+        n = int(digits)
+    else:
+        n = _PAGE_COUNT_WORDS.get((m.group(3) or "").lower(), 0)
+    return n if 1 <= n <= 50 else 0
+
+
+
 # ── File delivery / intake (preconfigured folders) ────────────────────────────
 
 # "save it to the folder/dir", "write to the network location", "don't send in mail"
@@ -432,16 +462,14 @@ def classify_request_intent(body: str, model_label: str) -> dict:
         "FALSE when the user refers to 'the attached file', 'the above file', or an email attachment "
         "— those are uploaded with the email, not in a folder.\n"
         "intake_filename: the exact file name to read if (and only if) read_from_folder is true, else \"\".\n"
-        "needs_web_search: true ONLY if answering requires CURRENT or EXTERNAL information from the "
-        "internet — news, prices, stocks, market/industry data, competitor info, benchmarks, "
-        "rankings, anything 'latest/current/today', or researching a company/topic beyond what the "
-        "email and its attachments contain. false when the request can be fully answered from the "
-        "attached/referenced documents plus general knowledge — summarising or analysing an uploaded "
-        "file, opinions, suggestions/ideas/brainstorming, drafting text, explaining a concept, or a "
-        "conversational reply. Explaining a concept, term, or technology ('what is X', 'explain Y', "
-        "'how does Z work') is general knowledge → false, even for tech/AI topics — only 'latest "
-        "news/developments about X' needs search. When a request mixes both (e.g. 'report on the "
-        "attached file AND compare with current market data'), use true.\n"
+        "needs_web_search: true if answering requires information from the internet OR if the user "
+        "asks to create/generate a document, report, presentation, analysis, or overview about a company, "
+        "organization, technology, product, market, or external topic WITHOUT an attached file or intake document. "
+        "CRITICAL: If the user asks to write/generate a report or document (word, pdf, ppt) about ANY entity "
+        "(e.g. 'EAI systems', 'competitors', 'AI in healthcare', etc.) and NO reference document is attached, "
+        "needs_web_search MUST be true so the agent gathers real, factual web data. "
+        "false ONLY when the user provides an attached document/file to summarize/analyze, or for simple general "
+        "conversational replies.\n"
         "output_format: what form the DELIVERABLE should take —\n"
         '  "ppt": a PowerPoint / slide deck / presentation;\n'
         '  "word": a Word / .docx document, letter, or formatted write-up as a file;\n'
@@ -812,7 +840,7 @@ def _run_meeting_flow(body: str, model_label: str, agent_name: str, sender: str 
         '  "attendees": [email addresses — those that appear literally in the email PLUS '
         "the sender's address above when they refer to themselves; never invent unknown ones],\n"
         '  "start_datetime": local time "YYYY-MM-DDTHH:MM:SS" — resolve relative dates '
-        "(tomorrow, next Monday) from today's date. NEVER guess the clock time: if the "
+        "(tomorrow, next Monday) from today's date. When a TIME RANGE is given (e.g. '11:00 AM - 12:00 PM', '11:00-12:00', '11 AM to 12 PM'), use the START time as start_datetime and derive duration_minutes from the difference between start and end. NEVER guess the clock time: if the "
         'email states no time of day, set "start_datetime" to "" and list "time" in "missing",\n'
         f'  "duration_minutes": integer (default {MEETING_DEFAULT_DURATION_MIN} if unspecified),\n'
         '  "description": one-line agenda or empty string,\n'
@@ -1283,21 +1311,35 @@ def _run_update_confirm_flow(body: str, model_label: str, agent_name: str,
 
 
 # ── Write prompts per output type ─────────────────────────────────────────────
+# Each prompt lives in its own file under agents/prompts/ so it can be tuned
+# independently without touching this file.  Import the unified dict here:
+from agents.prompts import WRITE_PROMPTS as _WRITE_PROMPTS  # noqa: E402
 
-try:
-    from prompts import (
-        WRITE_PROMPTS as _WRITE_PROMPTS,
-        QA_ANSWER_PROMPT as _QA_ANSWER_PROMPT,
-        QA_SINGLE_THRESHOLD as _QA_SINGLE_THRESHOLD,
-        QA_BATCH_SIZE as _QA_BATCH_SIZE,
-    )
-except ImportError:
-    from version.prompts import (
-        WRITE_PROMPTS as _WRITE_PROMPTS,
-        QA_ANSWER_PROMPT as _QA_ANSWER_PROMPT,
-        QA_SINGLE_THRESHOLD as _QA_SINGLE_THRESHOLD,
-        QA_BATCH_SIZE as _QA_BATCH_SIZE,
-    )
+# Alias for backward-compat with any code that still references _WRITE_PROMPTS.
+_WRITE_PROMPTS = _WRITE_PROMPTS  # re-export
+
+
+# ── Q&A fill constants ───────────────────────────────────────────────────────
+
+_QA_SINGLE_THRESHOLD = 15   # ≤ this many questions → single-pass
+_QA_BATCH_SIZE       = 10   # batch size when > threshold
+
+_QA_ANSWER_PROMPT = (
+    "You are a professional document analyst and response writer at EAI Systems Pvt. Ltd.\n"
+    "You are given a list of questions extracted from a document. Answer EACH question "
+    "clearly and professionally.\n\n"
+    "CRITICAL RULES:\n"
+    "- Answer EVERY question provided — do not skip any.\n"
+    "- Use ONLY facts from the attached document context and web-search results.\n"
+    "- Do NOT invent facts, prices, dates, or figures not in the source.\n"
+    "- If a question cannot be answered from the available information, say: "
+    "  'Based on the available information, this could not be determined.'\n"
+    "- Keep answers concise but complete — typically 1-4 sentences per question.\n"
+    "- Maintain professional tone appropriate for the document type.\n\n"
+    "OUTPUT FORMAT — return a JSON array ONLY, no other text:\n"
+    '[{"id": "<question_id>", "answer": "<your answer here>"}]\n\n'
+    "Match every 'id' value exactly from the input."
+)
 
 
 def _run_qa_batch(questions: list, context_message: str, llm) -> dict:
@@ -1428,10 +1470,7 @@ def run(context: dict) -> dict:
     from core.config import PROPOSAL_AGENT_MODEL
     from langchain_core.messages import SystemMessage, HumanMessage
     from tools.web_search import serpapi_search, tavily_search
-    from tools.doc_creator import create_document
-    from tools.excel_creator import create_spreadsheet
-    from tools.converter_tool import convert_document
-    from tools.ppt_agent import generate_presentation
+    from tools.converter_tool import convert_document  # used for pure format conversions
 
     agent_name  = "ASSISTANT"
     start       = time.time()
@@ -1715,6 +1754,11 @@ def run(context: dict) -> dict:
     if _slide_count:
         print(f"[{agent_name}] Explicit slide count requested: {_slide_count}")
 
+    # Explicit page-count request (e.g. "5 page word", "2 page pdf")
+    _page_count = _extract_page_count(body_lower) if output_type in ("word", "pdf") else 0
+    if _page_count:
+        print(f"[{agent_name}] Explicit page count requested: {_page_count} ({output_type.upper()})")
+
     print(f"[{agent_name}] Output type: {output_type} | Conversion: {is_conversion}")
 
     # ── Calendar actions (schedule / cancel) — confirmation-gated, short-circuit
@@ -1729,8 +1773,16 @@ def run(context: dict) -> dict:
     # Treat the message as a confirmation only if it looks like one (short reply,
     # yes/no, a number, or a selection word). Otherwise the user moved on — drop
     # the stale pending so we don't hijack a new request.
+    # SCH-002 FIX: if the pending action explicitly asked for missing info
+    # (needs_info=True), ANY follow-up reply is the missing detail -- always
+    # treat it as a continuation so the details are not discarded.
+    _pending_needs_info = bool(
+        _pending and isinstance(_pending.get("payload"), dict)
+        and _pending["payload"].get("needs_info")
+    )
     _looks_like_confirmation = bool(_pending and (
-        len(body.split()) <= 8
+        _pending_needs_info
+        or len(body.split()) <= 8
         or re.search(r"\b(yes|yep|yeah|no|nope|confirm|go ?ahead|do it|send it|cancel|none|"
                      r"first|second|third|fourth|number|that one|leave it|keep it|"
                      r"skip|don'?t|proceed)\b|\b\d{1,2}\b", body_lower)
@@ -1846,6 +1898,15 @@ def run(context: dict) -> dict:
     # straight to WRITE. _needs_multi_kb_lookup is deliberately narrow/fail-closed
     # (unlike uses_rag, which is fail-open) — see classify_request_intent — so this
     # doesn't widen back into running GATHER on every RAG-relevant request.
+    # Safety net: If the user requested a deliverable file (word, pdf, ppt, excel)
+    # and has NOT provided an attached document or folder intake file, we MUST gather real facts
+    # from web search so the agent does not hallucinate or rely on unrelated local chunks.
+    _has_doc = bool(attachment_context or inbox_attachments or _read_folder)
+    _deliverable_needs_data = (output_type in ("word", "pdf", "ppt", "excel") and not _has_doc)
+    if _deliverable_needs_data and not _needs_search:
+        print(f"[{agent_name}] Deliverable requested without attachments → auto-enabling GATHER web search to research '{subject}'")
+        _needs_search = True
+
     if not _needs_search and not _needs_multi_kb_lookup and not is_conversion:
         print(f"[{agent_name}] GATHER skipped — request answerable without web search or multi-part KB lookup")
     if not is_conversion and (_needs_search or _needs_multi_kb_lookup):
@@ -1950,6 +2011,20 @@ def run(context: dict) -> dict:
             write_prompt += (f"\n\nSLIDE COUNT (explicit user request — overrides the default "
                              f"slide-count guidance above): write enough content for EXACTLY "
                              f"{_slide_count} slides, no more and no fewer.")
+
+        if output_type in ("word", "pdf") and _page_count:
+            # Overrides the static "8-12 sections" hint baked into word and pdf prompts.
+            # Depth and length are calibrated for the exact page count requested.
+            write_prompt += (
+                f"\n\nPAGE COUNT (explicit user request — overrides the default '8-12 sections' guidance above):\n"
+                f"The user has explicitly asked for EXACTLY {_page_count} page(s) in this {output_type.upper()} document.\n"
+                f"- Exact length budget: In formatted Word and PDF documents, ONE printed page contains approximately 200 to 260 words (1 heading and 2 substantive paragraphs, or 1 paragraph + 1 compact table).\n"
+                f"- Target total words: Write approximately {_page_count * 230} words total for the entire document (200 to 250 words per page).\n"
+                f"- Structure: Divide the document into EXACTLY {_page_count} major sections using '## ' headings (one section per page).\n"
+                f"- Content Quality: Ensure EVERY section (including Section 1) has complete, rich, substantive paragraphs under its '## ' heading. Never output a heading without body text.\n"
+                f"- Sizing: Keep each section around 200 to 250 words so each section fits cleanly onto its designated page without spilling over.\n"
+                f"- Output ONLY the {_page_count} sections, nothing extra."
+            )
 
         # Reply in the same language as the request (detected in classify_request_intent).
         # Quoted thread history / attachments / KB content may be in a different
@@ -2123,53 +2198,31 @@ def run(context: dict) -> dict:
                 else:
                     print(f"[{agent_name}] Conversion did not produce a file: {result}")
 
-        elif output_type in ("pdf", "word") and written_content:
-            result = create_document.invoke({
-                "title":   title,
-                "content": written_content,
-                "format":  output_type,
-            })
-            if isinstance(result, str) and os.path.isfile(result):
-                files.append(result)
-                print(f"[{agent_name}] Rendered {output_type.upper()}: {os.path.basename(result)}")
+        elif output_type in ("pdf", "word", "excel", "csv", "ppt") and written_content:
+            # ── Dispatch to the dedicated per-format render engine ─────────────
+            # Each engine lives in tools/engines/<format>_engine.py and exposes
+            # a render(written_content, ctx) → (files, answer) interface so it
+            # can be customised (templates, post-processing, etc.) independently.
+            from tools.engines import RENDER_ENGINES
+            _engine = RENDER_ENGINES.get(output_type)
+            if _engine is None:
+                print(f"[{agent_name}] No render engine registered for output_type={output_type!r}")
             else:
-                print(f"[{agent_name}] {output_type.upper()} generation did not produce a file: {result}")
-
-        elif output_type in ("excel", "csv") and written_content:
-            result = create_spreadsheet.invoke({
-                "title":   title,
-                "content": written_content,
-                "format":  output_type,
-            })
-            if isinstance(result, str) and os.path.isfile(result):
-                files.append(result)
-                print(f"[{agent_name}] Rendered {output_type.upper()}: {os.path.basename(result)}")
-            else:
-                print(f"[{agent_name}] {output_type.upper()} generation did not produce a file: {result}")
-
-        elif output_type == "ppt" and written_content:
-            template = "sales_blue"
-            if re.search(r"sales.*orange|orange.*template", body_lower):
-                template = "sales_orange"
-            elif re.search(r"marketing|dark.*template", body_lower):
-                template = "marketing"
-            elif re.search(r"internal|technical|light.*template", body_lower):
-                template = "internal"
-
-            result = generate_presentation.invoke({
-                "topic":       title,
-                "context":     written_content,
-                "template":    template,
-                "model_label": model_label,
-                "task_number": task_number,
-                "content_language": _content_lang,
-                "slide_count": _slide_count,
-            })
-            if isinstance(result, str) and os.path.isfile(result):
-                files.append(result)
-                print(f"[{agent_name}] Rendered PPT: {os.path.basename(result)}")
-            else:
-                print(f"[{agent_name}] PPT generation did not produce a file: {result}")
+                _engine_ctx = {
+                    "title":            title,
+                    "subject":          subject,
+                    "body_lower":       body_lower,
+                    "model_label":      model_label,
+                    "task_number":      task_number,
+                    "content_language": _content_lang,
+                    "slide_count":      _slide_count,
+                    "page_count":       _page_count,
+                    "agent_name":       agent_name,
+                }
+                _efiles, _eanswer = _engine(written_content, _engine_ctx)
+                files.extend(_efiles)
+                if _eanswer:
+                    answer = _eanswer
 
         else:
             # Email reply — written_content IS the answer

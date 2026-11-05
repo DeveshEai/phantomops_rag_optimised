@@ -39,7 +39,6 @@ data/*.txt
 # Scratch / local test scripts
 scratch/
 test_output/
-assets/images/cache/
 
 # Planning / design docs (local only)
 phase2_task_design.md

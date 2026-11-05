@@ -44,7 +44,33 @@ def _llm_transient_reply(provider: str) -> str:
     )
 
 
+def _is_multi_agent_request(context: dict) -> bool:
+    """
+    Return True only for requests that genuinely require the multi-agent
+    orchestrator (Arabic pipeline only). Calendar actions (schedule/cancel/
+    update) are fully handled inside assistant_agent.run() via the LLM-powered
+    _run_meeting_flow() -- routing them to the orchestrator bypasses that and
+    uses the broken regex-only scheduling_agent.execute_scheduling() instead.
+    Simple Word / Excel / PPT / general / calendar requests all go straight
+    to the high-quality assistant_agent.run() pipeline.
+    """
+    text = (context.get("body", "") + " " + context.get("subject", "")).lower()
+    lang = context.get("content_language", "") or context.get("detected_language", "")
+
+    needs_arabic = (
+        "arabic" in text
+        or "\u0628\u0627\u0644\u0639\u0631\u0628\u064a\u0629" in text
+        or lang == "ar"
+    )
+    # SCH-004 FIX: needs_meeting removed -- calendar/scheduling requests are
+    # handled by assistant_agent._run_meeting_flow() (LLM extractor + domain
+    # guardrail + pending-action confirmation gate). Routing them to the
+    # orchestrator skips all of that and uses the old regex-only parser which
+    # cannot parse natural date/time formats like "10 November 2026" or
+    # "11:00 AM - 12:00 PM (IST)".
+    return needs_arabic
 def orchestrate(context: dict, force_model: str | None = None) -> dict:
+
     """Run the assistant agent for one email.
 
     Args:
@@ -61,35 +87,51 @@ def orchestrate(context: dict, force_model: str | None = None) -> dict:
 
     llm_failed = False
     failure_kind = ""
+    agents_used = ["orchestrator"]
     try:
-        from agents import assistant_agent
-        result = assistant_agent.run(context)
+        if _is_multi_agent_request(context):
+            # Genuinely multi-agent: Arabic pipeline, meeting scheduling, etc.
+            from core.orchestrator.orchestrator import CentralOrchestrator
+            task_id = context.get("task_id") or context.get("session_id") or "task_default"
+            orch = CentralOrchestrator()
+            result = orch.coordinate_request(context, parent_task_id=task_id)
+            if result.get("agents_used"):
+                agents_used = result["agents_used"]
+        else:
+            # Simple Word / Excel / PPT / general request:
+            # Use the original full LLM GATHER→WRITE→RENDER pipeline for
+            # high-quality, topic-specific document generation.
+            from agents import assistant_agent
+            result = assistant_agent.run(context)
+            agents_used = ["assistant"]
+
     except LLMUnavailableError as e:
         print(f"[SUPERVISOR] LLM provider unavailable ({e.provider}/{e.kind}): {e}")
         llm_failed = True
         failure_kind = e.kind
         result = {"answer": _llm_unavailable_reply(e.provider, e.kind), "files": []}
     except LLMTransientError as e:
-        # Momentary overload (503/"high demand"), already retried in-place and
-        # still failing. Reuses the exact same llm_failed=True machinery as a
-        # real outage: in a fanout, auto_send_node drops this model's result
-        # from the combined reply (other providers' real answers still go out);
-        # the task stays open rather than being marked "delivered" on junk.
         print(f"[SUPERVISOR] LLM provider transiently overloaded ({e.provider}): {e}")
         llm_failed = True
         failure_kind = "transient"
         result = {"answer": _llm_transient_reply(e.provider), "files": []}
     except Exception as e:
-        print(f"[SUPERVISOR] Assistant agent failed: {e}")
-        from core.config import get_email_signature
-        result = {
-            "answer": (
-                "Thank you for reaching out. I was unable to complete your request "
-                "automatically. A team member will get back to you shortly.\n\n"
-                f"{get_email_signature()}"
-            ),
-            "files": [],
-        }
+        print(f"[SUPERVISOR] Multi-agent orchestrator encountered exception: {e} — falling back to assistant agent.")
+        try:
+            from agents import assistant_agent
+            result = assistant_agent.run(context)
+            agents_used = ["assistant"]
+        except Exception as fallback_exc:
+            print(f"[SUPERVISOR] Assistant agent fallback failed: {fallback_exc}")
+            from core.config import get_email_signature
+            result = {
+                "answer": (
+                    "Thank you for reaching out. I was unable to complete your request "
+                    "automatically. A team member will get back to you shortly.\n\n"
+                    f"{get_email_signature()}"
+                ),
+                "files": [],
+            }
 
     duration_ms  = int((time.time() - start) * 1000)
     answer       = result.get("answer", "")
@@ -109,7 +151,7 @@ def orchestrate(context: dict, force_model: str | None = None) -> dict:
     return {
         "answer": answer,
         "attachments": attachments,
-        "agents_used": ["assistant"],
+        "agents_used": agents_used,
         "llm_failed": llm_failed,
         "failure_kind": failure_kind,
     }
